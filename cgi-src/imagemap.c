@@ -14,6 +14,29 @@
 ** 12/05/93: Rob McCool, robm@ncsa.uiuc.edu
 ** 
 ** Made CGI/1.0 compliant.
+**
+** 06/27/94: Chris Hyams, cgh@rice.edu
+**          Based on an idea by Rick Troth (troth@rice.edu)
+**
+** Imagemap configuration file in PATH_INFO.  Backwards compatible.
+**
+**  Old-style lookup in imagemap table:
+**    <a href="http://foo.edu/cgi-bin/imagemap/oldmap">
+**
+**  New-style specification of mapfile relative to DocumentRoot:
+**    <a href="http://foo.edu/cgi-bin/imagemap/path/for/new.map">
+**
+**  New-style specification of mapfile in user's public HTML directory:
+**    <a href="http://foo.edu/cgi-bin/imagemap/~username/path/for/new.map">
+**
+** 07/11/94: Craig Milo Rogers, Rogers@ISI.Edu
+**
+** Added the "point" datatype.  The nearest point wins.  Overrides "default".
+**
+** 08/28/94: Carlos Varela, cvarela@ncsa.uiuc.edu
+**
+** Fixed bug:  virtual URLs are now understood.
+** Better error reporting when not able to open configuration file.
 */
 
 #include <stdio.h>
@@ -23,6 +46,7 @@
 #else
 #include <ctype.h>
 #endif
+#include <sys/stat.h>
 
 #define CONF_FILE "/usr/local/etc/httpd/conf/imagemap.conf"
 
@@ -40,6 +64,8 @@ int main(int argc, char **argv)
     int i, j, k;
     FILE *fp;
     char *t;
+    double dist, mindist;
+    int sawpoint = 0;
     
     if (argc != 2)
         servererr("Wrong number of arguments, client may not support ISMAP.");
@@ -55,9 +81,18 @@ int main(int argc, char **argv)
     *t++ = '\0';
     testpoint[X] = (double) atoi(argv[1]);
     testpoint[Y] = (double) atoi(t);
+
+    /*
+     * if the mapname contains a '/', it represents a unix path -
+     * we get the translated path, and skip reading the configuration file.
+     */
+    if (strchr(mapname,'/')) {
+      strcpy(conf,getenv("PATH_TRANSLATED"));
+      goto openconf;
+    }
     
     if ((fp = fopen(CONF_FILE, "r")) == NULL)
-        servererr("Couldn't open configuration file.");
+        servererr(strcat("Couldn't open configuration file:", CONF_FILE));
 
     while(!(getline(input,MAXLINE,fp))) {
         char confname[MAXLINE];
@@ -69,8 +104,21 @@ int main(int argc, char **argv)
         if(!strcmp(confname,mapname))
             goto found;
     }
-    if(feof(fp))
-        servererr("Map not found in configuration file.");
+    /*
+     * if mapname was not found in the configuration file, it still
+     * might represent a file in the server root directory -
+     * we get the translated path, and check to see if a file of that
+     * name exists, jumping to the opening of the map file if it does.
+     */
+    if(feof(fp)) {
+      struct stat sbuf;
+      strcpy(conf,getenv("PATH_TRANSLATED"));
+      if (!stat(conf,&sbuf) && ((sbuf.st_mode & S_IFMT) == S_IFREG))
+	goto openconf;
+      else
+	servererr("Map not found in configuration file.");
+    }
+    
   found:
     fclose(fp);
     while(isspace(input[i]) || input[i] == ':') ++i;
@@ -79,9 +127,10 @@ int main(int argc, char **argv)
         conf[j] = input[i];
     conf[j] = '\0';
 
+  openconf:
     if(!(fp=fopen(conf,"r")))
-        servererr("Couldn't open map file.");
-    
+        servererr(strcat("Couldn't open configuration file:", conf));
+
     while(!(getline(input,MAXLINE,fp))) {
         char type[MAXLINE];
         char url[MAXLINE];
@@ -101,7 +150,7 @@ int main(int argc, char **argv)
             url[j] = input[i];
         url[j] = '\0';
 
-        if(!strcmp(type,"default")) {
+        if(!strcmp(type,"default") && !sawpoint) {
             strcpy(def,url);
             continue;
         }
@@ -141,6 +190,19 @@ int main(int argc, char **argv)
         if(!strcmp(type,"rect"))
             if(pointinrect(testpoint,pointarray))
                 sendmesg(url);
+        if(!strcmp(type,"point")) {
+	    /* Don't need to take square root. */
+	    dist = ((testpoint[X] - pointarray[0][X])
+		    * (testpoint[X] - pointarray[0][X]))
+		   + ((testpoint[Y] - pointarray[0][Y])
+		      * (testpoint[Y] - pointarray[0][Y]));
+	    /* If this is the first point, or the nearest, set the default. */
+	    if ((! sawpoint) || (dist < mindist)) {
+		mindist = dist;
+	        strcpy(def,url);
+	    }
+	    sawpoint++;
+	}
     }
     if(def[0])
         sendmesg(def);
@@ -149,7 +211,13 @@ int main(int argc, char **argv)
 
 sendmesg(char *url)
 {
-    printf("Location: %s%c%c",url,10,10);
+  if (strchr(url, ':'))   /*** It is a full URL ***/
+    printf("Location: ");
+  else                    /*** It is a virtual URL ***/
+    printf("Location: http://%s:%s", getenv("SERVER_NAME"), 
+           getenv("SERVER_PORT"));
+
+    printf("%s%c%c",url,10,10);
     printf("This document has moved <A HREF=\"%s\">here</A>%c",url,10);
     exit(1);
 }
@@ -252,3 +320,4 @@ int isname(char c)
 {
         return (!isspace(c));
 }
+

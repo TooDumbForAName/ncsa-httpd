@@ -2,7 +2,7 @@
 #
 # wais.pl -- WAIS search interface
 #
-# wais.pl,v 1.2 1994/04/10 05:33:29 robm Exp
+# $Id: wais.pl,v 1.2 1994/04/10 05:33:29 robm Exp $
 #
 # Tony Sanders <sanders@bsdi.com>, Nov 1993
 #

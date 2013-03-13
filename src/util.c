@@ -158,11 +158,17 @@ int is_matchexp(char *str) {
 
 void strsubfirst(int start,char *dest, char *src)
 {
-    char tmp[MAX_STRING_LEN];
+  int src_len, dest_len, i;
 
-    strcpy(tmp,&dest[start]);
-    strcpy(dest,src);
-    strcpy(&dest[strlen(src)],tmp);
+  if ((src_len=strlen(src))<start){  /** src "fits" in dest **/
+    for (i=0;dest[i]=src[i];i++);
+    for (i=src_len;dest[i]=dest[i-src_len+start];i++);
+  }
+  else {                             /** src doesn't fit in dest **/
+    for (dest_len=strlen(dest),i=dest_len+src_len-start;i>=src_len;i--)
+      dest[i] = dest[i-src_len+start];
+    for (i=0;i<src_len;i++) dest[i]=src[i];
+  }
 }
 
 /*
