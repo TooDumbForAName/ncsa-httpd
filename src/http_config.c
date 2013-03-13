@@ -13,39 +13,6 @@
  * http_config.c: auxillary functions for reading httpd's config file
  * and converting filenames into a namespace
  *
- * Based on NCSA HTTPd 1.3 by Rob McCool 
- *
- * 10/28/94  cvarela
- *      Added config options AgentLog and RefererLog for extra log info
- *
- * 02/19/95  blong
- *	Added config options MaxServers and StartServers for configuration
- *	defined children
- *
- * 03/21/95 cvarela
- *      Added RefererIgnore to ignore certain URIs when logging referers
- *
- * 06/01/95 blong
- *	Added patch by Conrad Damon (damon@netserver.stanford.edu) that
- *	avoids a cfg_getline loop if a user sets a directory as a password
- *	file.
- *
- * 09/02/95 blong
- *	Added patch by Kevin Ruddy (kevin.ruddy@powerdog.com) that should
- *	allow systems which don't recognize a numeric address to gethostbyname
- *	to use a numeric IP in the BindAddress and VirtualHost fields
- *
- * 09/10/95 mshapiro
- *      Added includes for <netinet/in.h> and <arpa/inet.h>
- * 09/18/95 mshapiro
- *      Added LogDirGroupWriteOk, LogDirPublicWriteOk
- *      directives
- * 10/06/95 blong
- *	Added patch by Elf Sternberg (elf@aaden.spry.com) to configure
- *	the process name which SETPROCTITLE uses
- * 10/06/95 blong
- *	Added patch by Nathan Neulinger (nneul@umr.edu) to have separate
- *	security permissions for Redirect in .htaccess files
  */
 
 
@@ -67,6 +34,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 #include "constants.h"
 #include "fdwrap.h"
@@ -78,8 +47,10 @@
 #include "http_log.h"
 #include "http_dir.h"
 #include "util.h"
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#ifdef FCGI_SUPPORT
+# include "fcgi.h"    /* for AppClassCmd() */
+#endif /* FCGI_SUPPORT */
+
 
 
 /* Server config globals */
@@ -191,8 +162,6 @@ void set_defaults(per_host *host, FILE *errors)
   timeout = DEFAULT_TIMEOUT;
   do_rfc931 = DEFAULT_RFC931;
 
-  /* Necessary with new configuration stuff? */
-  
   /* default resource config stuff */
   set_host_conf(host,PH_SRM_CONF,SRM_USER_DIR,DEFAULT_USER_DIR);
   set_host_conf(host,PH_SRM_CONF,SRM_INDEX_NAMES,DEFAULT_INDEX_NAMES);
@@ -486,11 +455,9 @@ void process_server_config(per_host *host, FILE *cfg, FILE *errors,
       }
 #ifdef DIGEST_AUTH
       else if(!strcasecmp(w,"AssumeDigestSupport")) {
-	cfg_getword(w,l);
-	if(!strcmp(w,"on"))
-	  assume_digest_support = TRUE;
-	else
-	  assume_digest_support = FALSE;
+      /* Doesn't do anything anymore, but if we take it out, anyone with
+       * it in their configuration files would complain.  *sigh* 
+       */
       }
 #endif /* DIGEST_AUTH */
       else if(((!strcasecmp(w,"<VirtualHost")) || (!strcasecmp(w,"<Host")))
@@ -590,6 +557,30 @@ host->srm_confname,n,errors);
 	config_warn("OldScriptAlias directive obsolete, ignored",
 		    host->srm_confname,n,errors);
       }
+#ifdef FCGI_SUPPORT
+      else if(!strcasecmp(w,"FCGIScriptAlias")) {
+        cfg_getword(w,l);
+        cfg_getword(w2,l);
+        if((w[0] == '\0') || (w2[0] == '\0')) {
+          config_error(
+"FCGIScriptAlias must be followed by a fakename, one space, then a realname",
+host->srm_confname,n,errors);
+        }
+        if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+          host->translations = NULL;
+        }
+        add_alias(host,w,w2,A_SCRIPT_FCGI);
+      }
+      else if(!strcasecmp(w,"AppClass")) {
+        char *result;
+        if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+          host->translations = NULL;
+        }
+        result = AppClassCmd(host, l);
+        if (result)
+          config_error(result, host->srm_confname, n, errors);
+      }
+#endif /* FCGI_SUPPORT */
       else if(!strcasecmp(w,"UserDir")) {
 	cfg_getword(w,l);
 	if(!strcmp(w,"DISABLED"))
@@ -655,11 +646,18 @@ host->srm_confname,n,errors);
       else if(!strcasecmp(w,"Redirect") || !strcasecmp(w,"RedirectTemp")) {
 	cfg_getword(w,l);
 	cfg_getword(w2,l);
-	if((w[0] == '\0') || (w2[0] == '\0') || (!is_url(w2))) {
+	if((w[0] == '\0') || (w2[0] == '\0') || 
+	   !(is_url(w2) || (w2[0] == '/'))) 
+	{
 	  config_error(
 "Redirect must be followed by a document, one space, then a URL",
 host->srm_confname,n,errors);
 	}
+	if (w2[0] == '/') {
+	  char w3[MAX_STRING_LEN];
+	  construct_url(w3,host,w2);
+	  strcpy(w2,w3);
+        }
 	if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
 	  host->translations = NULL;
 	}
@@ -668,7 +666,9 @@ host->srm_confname,n,errors);
       else if(!strcasecmp(w,"RedirectPermanent")) {
 	cfg_getword(w,l);
 	cfg_getword(w2,l);
-	if((w[0] == '\0') || (w2[0] == '\0') || (!is_url(w2))) {
+	if((w[0] == '\0') || (w2[0] == '\0') || 
+           !(is_url(w2) || (w2[0] == '/'))) 
+	{
 	  config_error(
 "RedirectPermanent must be followed by a document, one space, then a URL",
 host->srm_confname,n,errors);
@@ -676,6 +676,11 @@ host->srm_confname,n,errors);
 	if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
 	  host->translations = NULL;
 	}
+	if (w2[0] == '/') {
+          char w3[MAX_STRING_LEN];
+          construct_url(w3,host,w2);
+          strcpy(w2,w3);
+        }
 	add_redirect(host,w,w2,A_REDIRECT_PERM);
       }
       else if(!strcasecmp(w,"FancyIndexing")) {
@@ -806,7 +811,7 @@ void access_syntax_error(per_request *reqInfo, int n, char *err, FILE *fp,
     else {
         char e[MAX_STRING_LEN];
 	FClose(fp);
-        sprintf(e,"httpd: syntax error or override violation in access control file %s, reason: %s",file,err);
+        sprintf(e,"HTTPd: syntax error or override violation in access control file %s, reason: %s",file,err);
         die(reqInfo,SC_SERVER_ERROR,e);
     }
 }
@@ -821,6 +826,10 @@ int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or,
     register int x,i;
 
     x = num_sec;
+    if (num_sec > MAX_SECURITY) 
+      access_syntax_error(reqInfo,n,
+            "Too many security entries, increase MAX_SECURITY and recompile",
+	    f,file);
 
     sec[x].opts=OPT_UNSET;
     sec[x].override = or;
@@ -842,7 +851,10 @@ int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or,
         sec[x].order[i] = DENY_THEN_ALLOW;
         sec[x].num_allow[i]=0;
         sec[x].num_deny[i]=0;
+	sec[x].num_referer_allow[i]=0;
+	sec[x].num_referer_deny[i]=0;
         sec[x].num_auth[i] = 0;
+	sec[x].on_deny[i] = NULL;
     }
 
     while(!(cfg_getline(l,MAX_STRING_LEN,f))) {
@@ -1087,18 +1099,38 @@ int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or,
                 access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
             cfg_getword(w2,l);
-            if((w[0] == '\0') || (w2[0] == '\0') || (!is_url(w2))) {
+            if((w[0] == '\0') || (w2[0] == '\0') || 
+	       !(is_url(w2) || (w2[0] == '/')))
+	    {
                 access_syntax_error(reqInfo,n,
 "Redirect must be followed by a document, one space, then a URL.",f,file);
-            }
+            } 
             if(!file) {
+	      if (w2[0] == '/') {
+                char w3[MAX_STRING_LEN];
+                construct_url(w3,gConfiguration,w2);
+                strcpy(w2,w3);
+              }
 	      if (!set_host_conf_value(gConfiguration,PH_SRM_CONF,SRM_TRANSLATIONS)) {
 		gConfiguration->translations = NULL;
 	      }
 	      add_redirect(gConfiguration,w,w2,A_REDIRECT_TEMP);
 	    }
             else {
-		if (!strcmp(reqInfo->url,w)) {
+		char tmp[HUGE_STRING_LEN];
+		int len;
+	        if (w2[0] == '/') {
+                   construct_url(tmp,reqInfo->hostInfo,w2);
+	           strcpy(w2,tmp);
+                }
+		strcpy(tmp,reqInfo->url);
+		if (reqInfo->path_info[0]) {
+		  len = strlen(reqInfo->url);
+		  if (reqInfo->url[len-1] == '/')
+		    reqInfo->url[len-1] = '\0';
+                  strcat(tmp,reqInfo->path_info);
+		} 
+		if (!strcmp(tmp,w) || !strcmp_match(tmp,w)) {
 		  FClose(f);
 		  die(reqInfo,SC_REDIRECT_TEMP,w2);
 		}
@@ -1109,20 +1141,40 @@ int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or,
                 access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
             cfg_getword(w2,l);
-            if((w[0] == '\0') || (w2[0] == '\0') || (!is_url(w2))) {
+            if((w[0] == '\0') || (w2[0] == '\0') || 
+	       !(is_url(w2) || (w2[0] == '/'))) 
+	    {
                 access_syntax_error(reqInfo,n,
 "Redirect must be followed by a document, one space, then a URL.",f,file);
             }
             if(!file) {
+	      if (w2[0] == '/') {
+                char w3[MAX_STRING_LEN];
+                construct_url(w3,gConfiguration,w2);
+                strcpy(w2,w3);
+              }
 	      if (!set_host_conf_value(gConfiguration,PH_SRM_CONF,SRM_TRANSLATIONS)) {
 		gConfiguration->translations = NULL;
 	      }
 	      add_redirect(gConfiguration,w,w2,A_REDIRECT_PERM);
 	    }
             else {
-                if (!strcmp(reqInfo->url,w)) {
+                char tmp[HUGE_STRING_LEN];
+                int len;
+                if (w2[0] == '/') {
+                   construct_url(tmp,reqInfo->hostInfo,w2);
+                   strcpy(w2,tmp);
+                }
+                strcpy(tmp,reqInfo->url);
+                if (reqInfo->path_info[0]) {
+                  len = strlen(reqInfo->url);
+                  if (reqInfo->url[len-1] == '/')
+                    reqInfo->url[len-1] = '\0';
+                  strcat(tmp,reqInfo->path_info);
+                }
+                if (!strcmp(tmp,w) || !strcmp_match(tmp,w)) {
                   FClose(f);
-                  die(reqInfo,SC_REDIRECT_PERM,w2);
+                  die(reqInfo,SC_REDIRECT_TEMP,w2);
                 }
             }
 	}
@@ -1180,15 +1232,65 @@ int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or,
                         for(i=0;i<METHODS;i++)
                             if(m[i]) {
                                 int q=sec[x].num_allow[i]++;
+				if (q >= MAX_SECURITY)
+                                  access_syntax_error(reqInfo,n,
+	  "Too many allow entries, increase MAX_SECURITY and recompile",
+			                              f,file);
                                 if(!(sec[x].allow[i][q] = strdup(w)))
                                     die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
                             }
+                    }
+                }
+		else if(!strcasecmp(w,"referer")) {
+		    int ref_type; 
+
+		    cfg_getword(w,l);
+		    if(!strcmp(w,"allow")) {
+		      ref_type = FA_ALLOW; 
+		    } else if (!strcmp(w,"deny")) {
+		      ref_type = FA_DENY;
+		    } else access_syntax_error(reqInfo,n,
+					       "unknown referer type.",
+					       f,file);
+                    cfg_getword(w,l);
+  		    if(strcmp(w,"from"))
+		      access_syntax_error(reqInfo,n,
+				          "allow/deny must be followed by from.",
+					  f,file);
+		    while(1) {
+		      cfg_getword(w,l);
+		      if (!w[0]) break;
+		      for(i=0;i<METHODS;i++)
+			if(m[i]) {
+			  int q;
+			  if (ref_type == FA_ALLOW) {
+			    q=sec[x].num_referer_allow[i]++;
+                            if (q >= MAX_SECURITY)
+			      access_syntax_error(reqInfo,n,
+    "Too many referer allow entries, increase MAX_SECURITY and recompile",
+		                                  f,file);
+			    if(!(sec[x].referer_allow[i][q] = strdup(w)))
+			      die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
+			  } else if (ref_type == FA_DENY) {
+			    q=sec[x].num_referer_deny[i]++;
+                            if (q >= MAX_SECURITY)
+                              access_syntax_error(reqInfo,n,
+    "Too many referer deny entries, increase MAX_SECURITY and recompile",
+                                                  f,file);
+			    if(!(sec[x].referer_deny[i][q] = strdup(w)))
+			      die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
+                          }
+                        }
                     }
                 }
                 else if(!strcasecmp(w,"require")) {
                     for(i=0;i<METHODS;i++)
                          if(m[i]) {
                             int q=sec[x].num_auth[i]++;
+                            if (q >= MAX_SECURITY)
+                              access_syntax_error(reqInfo,n,
+ 	    "Too many require entries, increase MAX_SECURITY and recompile",
+                                                  f,file);
                             if(!(sec[x].auth[i][q] = strdup(l)))
                                 die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
                         }
@@ -1205,6 +1307,10 @@ int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or,
                         for(i=0;i<METHODS;i++)
                             if(m[i]) {
                                 int q=sec[x].num_deny[i]++;
+                                if (q >= MAX_SECURITY)
+                                  access_syntax_error(reqInfo,n,
+    		"Too many deny entries, increase MAX_SECURITY and recompile",
+                                                      f,file);
                                 if(!(sec[x].deny[i][q] = strdup(w)))
                                     die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
                             }
@@ -1221,6 +1327,13 @@ int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or,
 					    "Satisfy either any or all.", 
 					    f,file);
 		}
+		else if(!strcasecmp(w,"OnDeny")) {
+                  for(i=0;i<METHODS;i++)
+                     if(m[i]) {
+                       if(!(sec[x].on_deny[i] = strdup(l)))
+                         die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
+                     }
+                }
                 else
                     access_syntax_error(reqInfo,n,
 					"Unknown keyword in Limit region.",
@@ -1270,7 +1383,7 @@ void process_access_config(FILE *errors)
     num_sec = 0;
     n=0;
     if(!(f=fopen(access_confname,"r"))) {
-        fprintf(errors,"httpd: could not open access configuration file %s.\n",
+        fprintf(errors,"HTTPd: could not open access configuration file %s.\n",
                 access_confname);
         perror("fopen");
         exit(1);
@@ -1302,7 +1415,7 @@ void read_config(FILE *errors)
 
   if(!(cfg = fopen(server_confname,"r"))) {
     fprintf(errors,
-	    "httpd: could not open server config. file %s\n",
+	    "HTTPd: could not open server config. file %s\n",
 	    server_confname);
     perror("fopen");
     exit(1);

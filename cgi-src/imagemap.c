@@ -47,6 +47,9 @@
 **
 ** 1.9 : Fixed bug:  If you requested a new style conf file in DOCUMENT_ROOT,
 **       and didn't have an old style conf file, it would fail
+** 1.9a: Most other imagemap programs seem to allow a non-full path as the url,
+**	 so we'll switch to that.  Any url not starting with / goes to the
+**	 same path as the map file.
 */
 
 #include <stdio.h>
@@ -80,11 +83,11 @@ static int pointincircle(double point[2], double coords[MAXVERTS][2]);
 static int pointinrect(double point[2], double coords[MAXVERTS][2]);
 
 int isname(char);
+char input[MAXLINE], *mapname, def[MAXLINE], conf[MAXLINE], errstr[MAXLINE];
+double testpoint[2], pointarray[MAXVERTS][2];
 
 int main(int argc, char **argv)
 {
-    char input[MAXLINE], *mapname, def[MAXLINE], conf[MAXLINE], errstr[MAXLINE];
-    double testpoint[2], pointarray[MAXVERTS][2];
     int i, j, k;
     FILE *fp;
     char *t;
@@ -111,7 +114,7 @@ int main(int argc, char **argv)
      * we get the translated path, and skip reading the configuration file.
      */
     if (strchr(mapname,'/')) {
-      strcpy(conf,getenv("PATH_TRANSLATED"));
+      strncpy(conf,getenv("PATH_TRANSLATED"),MAXLINE);
       goto openconf;
     }
     
@@ -139,7 +142,7 @@ int main(int argc, char **argv)
      */
     if(feof(fp)) {
       struct stat sbuf;
-      strcpy(conf,getenv("PATH_TRANSLATED"));
+      strncpy(conf,getenv("PATH_TRANSLATED"),MAXLINE);
       if (!stat(conf,&sbuf) && ((sbuf.st_mode & S_IFMT) == S_IFREG))
 	goto openconf;
       else
@@ -240,19 +243,39 @@ int main(int argc, char **argv)
 
 static void sendmesg(char *url)
 {
+  char *port;
+  char *path_info;
+  char path[MAXLINE];
+
   if (strchr(url, ':'))   /*** It is a full URL ***/
-    printf("Location: ");
+    printf("Location: %s%c%c",url,LF,LF);
   else {                   /*** It is a virtual URL ***/
-    char *port;
     printf("Location: http://%s", getenv("SERVER_NAME"));
 
       /* only add port if it's not the default */
      if ((port = getenv("SERVER_PORT")) && strcmp(port,"80"))
       printf(":%s",port);
+    
+    /* if its a full path, just use it, else add path from PATH_INFO */
+    if (url[0] == '/') {
+      printf("%s%c%c",url,LF,LF);
+    } else { 
+      if ((path_info = getenv("PATH_INFO"))) {
+	char *last = strrchr(path_info,'/');
+	int x = 0;
+	while (((path_info+x) <= last) && (x < MAXLINE)) {
+	  path[x] = *(path_info+x);
+	  x++;
+        }
+	path[x] = '\0';
+      }	else { 
+	strcpy(path,"/");
+      }
+      printf("%s%s%c%c",path,url,LF,LF);
     }
-    printf("%s%c%c",url,10,10);
-    printf("This document has moved <A HREF=\"%s\">here</A>%c",url,10);
-    exit(1);
+  }
+  printf("This document has moved <A HREF=\"%s\">here</A>%c",url,LF);
+  exit(1);
 }
 
 static int pointinrect(double point[2], double coords[MAXVERTS][2])
@@ -341,7 +364,7 @@ static int pointinpoly(double point[2], double pgon[MAXVERTS][2])
 
 static void servererr(char *msg)
 {
-    printf("Content-type: text/html%c%c",10,10);
+    printf("Content-type: text/html%c%c",LF,LF);
     printf("<title>Mapping Server Error</title>");
     printf("<h1>Mapping Server Error</h1>");
     printf("This server encountered an error:<p>");

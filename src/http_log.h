@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * http_log.h,v 1.15 1995/11/28 09:02:05 blong Exp
+ * http_log.h,v 1.18 1996/03/06 23:21:06 blong Exp
  *
  ************************************************************************
  *
@@ -41,6 +41,7 @@
 
 /* globals defined in this module */
 extern const char StatLine200[];
+extern const char StatLine204[];
 extern const char StatLine301[];
 extern const char StatLine302[];
 extern const char StatLine304[];
@@ -51,6 +52,7 @@ extern const char StatLine404[];
 extern const char StatLine408[];
 extern const char StatLine500[];
 extern const char StatLine501[];
+extern const char StatLine503[];
 extern char error_msg[];
 
 extern int ErrorStat;
@@ -66,7 +68,6 @@ void close_logs(per_host *host);
 void error_log2stderr(FILE *error_log);
 
 void title_html(per_request *reqInfo, char *msg);
-void begin_http_header(per_request *reqInfo, const char *msg);
 
 int die(per_request *reqInfo, int type, char *err_string);
 

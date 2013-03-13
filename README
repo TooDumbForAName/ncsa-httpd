@@ -1,5 +1,5 @@
 
-NCSA HTTPd Server 1.5c
+NCSA HTTPd Server 1.5.2
 
 Copyright (c) 1995 Board of Trustees, University of Illinois
 
@@ -70,6 +70,8 @@ support/dbmpasswd	Program to make password files that use dbm
 support/htdigest	Program to make MD5 password files (std/text)
 support/htpasswd	Program to make password files (std/text)
 support/std2dbm		Program to convert std files to dbm
+support/webgrab		Brian J. Swetland's Command Line Browser 
+			  (its almost as good as telnet)
 
 Version Number Defined
 ---------------------------
@@ -82,3 +84,4 @@ Version Number Defined
 |  ---- Major revisions.  Probably not going to be another until 2.0
  ------ Really major revisions, code overhauls, goal changes, language
         changes
+

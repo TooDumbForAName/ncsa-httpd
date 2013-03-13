@@ -10,21 +10,12 @@
  *
  ************************************************************************
  *
- * http_access.c,v 1.69 1995/11/28 09:01:48 blong Exp
+ * http_access.c,v 1.78 1996/04/05 18:54:49 blong Exp
  *
  ************************************************************************
  * 
  * http_access: Security options etc.
  *
- * Based on NCSA HTTPd 1.3 by Rob McCool
- *
- *  03-12-95 blong
- *     Added patch to fix ALLOW_THEN_DENY
- * 
- *  10-02-95 blong
- *	Added patch by Maurizio Codogno (mau@beatles.cselt.stet.it) to
- *	allow or deny hosts using a LOCAL keyword which matches all hosts
- *	without a dot in their name
  */
 
 
@@ -47,12 +38,7 @@
 #include "http_mime.h"
 #include "http_log.h"
 #include "util.h"
-
-#ifdef DIGEST_AUTH
-int client_accepts_digest;
-int assume_digest_support;
-#endif /* DIGEST_AUTH */
-
+#include "allocate.h"
 
 /*
  * Modified this bad boy so he wouldn't
@@ -81,25 +67,28 @@ int in_domain(char *domain, char *what)
  * Address matching should really be done with subnet masks, though.
  * mullen@itd.nrl.navy.mil 11/16/95
  *
- * Forget it, the code didn't work, and we'll just change the docs to
- * let everyone know how it really works.
+ * Returned to normal, as the patch didn't work.  For now, I think
+ * that updating the documenation to say that you have to end in
+ * a . in order to prohibit other networks is better, as some people
+ * might like the ability to allow anything that matches 128.174.1
+ * blong - 1/26/96
  */
 int in_ip(char *domain, char *what) 
 {
 /*   int dl=strlen(domain);
 
    return (!strncmp(domain,what,dl)) &&
-            (domain[dl-1]=='.' &&  strlen(what)<=dl &&   what[dl]=='.');
-*/
-   return(!strncmp(domain,what,strlen(domain)));
+            (domain[dl-1]=='.' &&  strlen(what)<=dl &&   what[dl]=='.'); */
+
+   return(!strncmp(domain,what,strlen(domain))); 
 }
 
-/* find_allow()
+/* find_host_allow()
  * Hunts down list of allowed hosts and returns 1 if allowed, 0 if not
  * As soon as it finds an allow that matches, it returns 1
  */
 
-int find_allow(per_request *reqInfo, int x) 
+int find_host_allow(per_request *reqInfo, int x) 
 {
     register int y;
 
@@ -142,11 +131,11 @@ int find_allow(per_request *reqInfo, int x)
     return FA_DENY;
 }
 
-/* find_deny()
+/* find_host_deny()
  * Hunts down list of denied hosts and returns 0 if denied, 1 if not
  * As soon as it finds a deny that matches, it returns 0
  */
-int find_deny(per_request *reqInfo, int x) 
+int find_host_deny(per_request *reqInfo, int x) 
 {
     register int y;
 
@@ -191,8 +180,85 @@ int find_deny(per_request *reqInfo, int x)
     return FA_ALLOW;
 }
 
+/* match_referer()
+ * currently matches restriction with sent for only as long as restricted
+ */
+int match_referer(char *restrict, char *sent) {
+  return !(strcmp_match(sent,restrict));
+}
+
+/* find_referer_allow()
+ * Hunts down list of allowed hosts and returns 1 if allowed, 0 if not
+ * As soon as it finds an allow that matches, it returns 1
+ */
+
+int find_referer_allow(per_request *reqInfo, int x)
+{
+    register int y;
+
+    /* If no allows are specified, then allow */
+    if(sec[x].num_referer_allow[reqInfo->method] == 0)
+        return FA_ALLOW;
+
+    for(y=0;y<sec[x].num_referer_allow[reqInfo->method];y++) {
+        if(!strcmp("all",sec[x].referer_allow[reqInfo->method][y]))
+            return FA_ALLOW;
+#ifdef LOCALHACK
+/* I haven't quite come up with either a reason or a method for
+ * using the LOCALHACK with referer, so nothing for now.
+ */
+#endif /* LOCALHACK */
+        if(match_referer(sec[x].referer_allow[reqInfo->method][y],
+                         reqInfo->inh_referer))
+          {
+            reqInfo->bSatisfiedReferer = TRUE;
+            return FA_ALLOW;
+          }
+    }
+    /* Default is to deny */
+    return FA_DENY;
+}
+
+/* find_referer_deny()
+ * Hunts down list of denied hosts and returns 0 if denied, 1 if not
+ * As soon as it finds a deny that matches, it returns 0
+ */
+int find_referer_deny(per_request *reqInfo, int x)
+{
+    register int y;
+
+    /* If there aren't any denies, then it is allowed
+     */
+    if(sec[x].num_referer_deny[reqInfo->method] == 0)
+        return FA_ALLOW;
+
+    for(y=0;y<sec[x].num_referer_deny[reqInfo->method];y++) {
+        if(!strcmp("all",sec[x].referer_deny[reqInfo->method][y]))
+          {
+            reqInfo->bSatisfiedReferer = FALSE;
+            return FA_DENY;
+          }
+#ifdef LOCALHACK
+/* I haven't quite come up with either a reason or a method for
+ * using the LOCALHACK with referer, so nothing for now.
+ */
+#endif /* LOCALHACK */
+        if(match_referer(sec[x].referer_deny[reqInfo->method][y],
+		         reqInfo->inh_referer))
+          {
+            reqInfo->bSatisfiedReferer = FALSE;
+            return FA_DENY;
+          }
+    }
+    /* Default is to allow */
+    reqInfo->bSatisfiedReferer = TRUE;
+    return FA_ALLOW;
+}
+
+
+
 void check_dir_access(per_request *reqInfo,int x, 
-		      int *allow, int *allow_options) 
+		      int *allow, int *allow_options, int *other) 
 {
     if(sec[x].auth_name[0]) 
 	reqInfo->auth_name = sec[x].auth_name;
@@ -215,32 +281,40 @@ void check_dir_access(per_request *reqInfo,int x,
 
     if(sec[x].order[reqInfo->method] == ALLOW_THEN_DENY) {
         *allow=FA_DENY;
-	if (find_allow(reqInfo,x) == FA_ALLOW)
+	if ((find_host_allow(reqInfo,x) == FA_ALLOW) && 
+	    (find_referer_allow(reqInfo,x) == FA_ALLOW))
            *allow = FA_ALLOW;
-	if (find_deny(reqInfo,x) == FA_DENY)
+	if ((find_host_deny(reqInfo,x) == FA_DENY) ||
+	    (find_referer_deny(reqInfo,x) == FA_DENY))
            *allow = FA_DENY;
     } 
     else if(sec[x].order[reqInfo->method] == DENY_THEN_ALLOW) {
-	if (find_deny(reqInfo,x) == FA_DENY)
+	if ((find_host_deny(reqInfo,x) == FA_DENY) ||
+	    (find_referer_deny(reqInfo,x) == FA_DENY))
            *allow = FA_DENY;
-	if (find_allow(reqInfo,x) == FA_ALLOW)
+	if ((find_host_allow(reqInfo,x) == FA_ALLOW) &&
+	    (find_referer_allow(reqInfo,x) == FA_ALLOW))
            *allow = FA_ALLOW;
     }
     else { /* order == MUTUAL_FAILURE: allowed and not denied */
       *allow = FA_DENY;
-      if ((find_allow(reqInfo,x) == FA_ALLOW) &&
-          !(find_deny(reqInfo,x) == FA_DENY))
+      if ((find_host_allow(reqInfo,x) == FA_ALLOW) &&
+	  (find_referer_allow(reqInfo,x) == FA_ALLOW) &&
+          !(find_host_deny(reqInfo,x) == FA_DENY) &&
+	  !(find_referer_deny(reqInfo,x) == FA_DENY))
             *allow = FA_ALLOW;
     }
    
     if(sec[x].num_auth[reqInfo->method])
         *allow_options=x;
+      
 }
 
 void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
 		     char *allow_options) 
 {
     int will_allow, need_auth, num_dirs;
+    int need_enhance;
     char opts[MAX_STRING_LEN], override[MAX_STRING_LEN];
     char path[MAX_STRING_LEN], d[MAX_STRING_LEN];
     char errstr[MAX_STRING_LEN];
@@ -255,9 +329,10 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
     num_dirs = count_dirs(path);
     will_allow = FA_ALLOW; 
     need_auth = -1;
+    need_enhance = -1;
 
-    user[0] = '\0';
-    groupname[0] = '\0';
+    reqInfo->auth_user[0] = '\0';
+    reqInfo->auth_group[0] = '\0';
     reset_mime_vars();
 
     for(x=0;x<num_dirs;x++) {
@@ -277,7 +352,7 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
                         opts[y] = sec[x].opts;
                     override[y] = sec[x].override;
                 }
-                check_dir_access(reqInfo,x,&will_allow,&need_auth);
+                check_dir_access(reqInfo,x,&will_allow,&need_auth,&need_enhance);
             }
         }
         else if(!strncmp(path,sec[x].d,strlen(sec[x].d))) {
@@ -286,7 +361,10 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
                     opts[y] = sec[x].opts;
                 override[y] = sec[x].override;
             }
-            check_dir_access(reqInfo,x,&will_allow,&need_auth);
+            check_dir_access(reqInfo,x,&will_allow,&need_auth,&need_enhance);
+        }
+	if (!will_allow && sec[x].on_deny[reqInfo->method]) {
+	  strcpy(reqInfo->outh_location,sec[x].on_deny[reqInfo->method]);
         }
     }
     if((override[n]) || (!(opts[n] & OPT_SYM_LINKS)) || 
@@ -299,7 +377,7 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
 		
 		if(lstat(d,&lfi) != 0)
 		{
-		    sprintf(errstr,"httpd: can't lstat %s, errno = %d",d, errno);
+		    sprintf(errstr,"HTTPd: can't lstat %s, errno = %d",d, errno);
 		    log_error(errstr,reqInfo->hostInfo->error_log);
 		    *allow=FA_DENY;
 		    *allow_options = OPT_NONE;
@@ -309,7 +387,7 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
 		    if(opts[x] & OPT_SYM_OWNER) {
 			if(stat(d,&fi) != 0)
 			{
-			    sprintf(errstr,"httpd: can't stat %s, errno = %d",d, errno);
+			    sprintf(errstr,"HTTPd: can't stat %s, errno = %d",d, errno);
 			    log_error(errstr,reqInfo->hostInfo->error_log);
 			    *allow=FA_DENY;
 			    *allow_options = OPT_NONE;
@@ -320,7 +398,7 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
 		    }
 		    else {
 		      bong:
-			sprintf(errstr,"httpd: will not follow link %s",d);
+			sprintf(errstr,"HTTPd: will not follow link %s",d);
 			log_error(errstr,reqInfo->hostInfo->error_log);
 			*allow=FA_DENY;
 			*allow_options = OPT_NONE;
@@ -338,8 +416,14 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
 		    }
 		    if ((sec[y].num_auth[reqInfo->method] > 0) || 
 			(sec[y].num_allow[reqInfo->method] > 0) ||
-                        (sec[y].num_deny[reqInfo->method] > 0))
-			  check_dir_access(reqInfo,y,&will_allow,&need_auth);
+			(sec[y].num_deny[reqInfo->method] > 0) ||
+			(sec[y].num_referer_allow[reqInfo->method] > 0) ||
+			(sec[y].num_referer_deny[reqInfo->method] > 0))
+			check_dir_access(reqInfo,y,&will_allow,&need_auth,&need_enhance);
+	                if (!will_allow && sec[y].on_deny[reqInfo->method]) {
+	                  strcpy(reqInfo->outh_location,
+				 sec[y].on_deny[reqInfo->method]);
+       			} 
 		}
 	    }
 	}
@@ -349,7 +433,7 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
         struct stat fi,lfi;
         if(lstat(path,&fi)!=0)
 	{
-	    sprintf(errstr,"httpd: can't lstat %s, errno = %d",path, errno);
+	    sprintf(errstr,"HTTPd: can't lstat %s, errno = %d",path, errno);
 	    log_error(errstr,reqInfo->hostInfo->error_log);
 	    *allow=FA_DENY;
 	    *allow_options = OPT_NONE;
@@ -359,7 +443,7 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
             if(opts[n] & OPT_SYM_OWNER) {
                 if(stat(path,&lfi)!=0)
 		{
-		    sprintf(errstr,"httpd: can't stat %s, errno = %d",path, errno);
+		    sprintf(errstr,"HTTPd: can't stat %s, errno = %d",path, errno);
 		    log_error(errstr,reqInfo->hostInfo->error_log);
 		    *allow=FA_DENY;
 		    *allow_options = OPT_NONE;
@@ -370,7 +454,7 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
             }
             else {
               gong:
-                sprintf(errstr,"httpd: will not follow link %s",path);
+                sprintf(errstr,"HTTPd: will not follow link %s",path);
                 log_error(errstr,reqInfo->hostInfo->error_log);
                 *allow=FA_DENY;
                 *allow_options = OPT_NONE;
@@ -381,12 +465,12 @@ void evaluate_access(per_request *reqInfo,struct stat *finfo,int *allow,
     *allow = will_allow;
     if(will_allow) {
         *allow_options = opts[num_dirs-1];
-        if ((need_auth >= 0) && !sec[need_auth].bSatisfy) {
+        if ((need_auth >= 0) && (sec[need_auth].bSatisfy == SATISFY_ALL)) {
 	    reqInfo->bSatisfiedDomain = 0;
-	    check_auth(reqInfo,&sec[need_auth], auth_line);
+	    check_auth(reqInfo,&sec[need_auth], reqInfo->inh_auth_line);
 	}
-    } else if (need_auth >= 0 && sec[need_auth].bSatisfy) {
-	check_auth(reqInfo,&sec[need_auth], auth_line);
+    } else if ((need_auth >= 0) && (sec[need_auth].bSatisfy == SATISFY_ANY)) {
+	check_auth(reqInfo,&sec[need_auth], reqInfo->inh_auth_line);
 	*allow_options = opts[num_dirs-1];
 	*allow = FA_ALLOW;
     }
@@ -406,6 +490,11 @@ void kill_security(void)
                 free(sec[x].deny[m][y]);
             for(y=0;y<sec[x].num_auth[m];y++)
                 free(sec[x].auth[m][y]);
+            for(y=0;y<sec[x].num_referer_allow[m];y++)
+		free(sec[x].referer_allow[m][y]);
+            for(y=0;y<sec[x].num_referer_deny[m];y++)
+		free(sec[x].referer_deny[m][y]);
+            free(sec[x].on_deny[m]);
         }
 /*        if(sec[x].auth_type)
             free(sec[x].auth_type);
@@ -440,6 +529,11 @@ void reset_security(void)
                 free(sec[x].deny[m][y]);
             for(y=0;y<sec[x].num_auth[m];y++)
                 free(sec[x].auth[m][y]);
+            for(y=0;y<sec[x].num_referer_allow[m];y++)
+		free(sec[x].referer_allow[m][y]);
+            for(y=0;y<sec[x].num_referer_deny[m];y++)
+		free(sec[x].referer_deny[m][y]);
+            if (sec[x].on_deny[m]) free(sec[x].on_deny[m]);
         }
 /*        if(sec[x].auth_type)
             free(sec[x].auth_type);

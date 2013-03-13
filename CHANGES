@@ -1,3 +1,56 @@
+
+Changes for 1.5.2
+------------------
+*) Changed getline rfc822 line wrap to check for validity of the next bits
+   before attempting to see them
+*) Changed imagemap.c so relative URLs actually work
+*) Don't core dump on a method only request
+*) reset errno to 0 in send_fp so we break out of loop
+*) somewhere we stopped killing cgi scripts on SIGALRM and SIGPIPE
+*) changed group handling support to support multiple groups again
+*) reset content_length before scanning cgi headers, not after
+*) don't free env var in replace (it uses allocate now)
+*) Only look for path_info if its part of the requested URL (as opposed
+   to keep looking until you hit a real directory)
+*) Make make_dirstr() in util.c return / instead of null if n = 1
+*) Added FCGI support from Openmarket
+*) Added support for Linux 2.0
+*) Added support for SCO OpenServer 5
+
+Changes for 1.5.1
+------------------
+*) Imagemaps (both internal and external) now add the path of the map file
+   for non full path urls in the map file
+*) A couple logging functions didn't check reqInfo->remote_name for a NULL
+*) change getuid to geteuid in httpd.c so that effectively root people can
+   start the server and have it change uids
+*) Slight code rearrangement to make Redirects from .htaccess more 
+   useful because the file doesn't have to exist. 
+*) Added support for restricted access by Referer field
+*) Added OnDeny command for Limit directive which allows a redirect on
+   failure (esp. useful for denying by referer)
+*) Added string allocating mechanism for speed
+*) Added CONTENT_MD5 header support from patches by Martin Hamilton 
+   (martin@net.lut.ac.uk)
+*) Server doesn't keep creating more structures in the event of KeepAlive
+*) Added bounds checking for security structures
+*) Fixed Order mutual-failure 
+*) Support both CERN and NCSA style imagemaps (on a line by line basis)
+*) Attempting to make the server thread safe
+*) First attempt at allowing ErrorDocument 401s as html files (still broken)
+*) Fixed string searching for user in group
+*) Close csd (socket) on exec of CGI scripts so that client doesn't hang
+   waiting for the scripts (and their children) to finish
+*) made a single interface for most output functions to make it easier
+   to go to different output functions (SSL is a good example)
+*) remove path_args/path_alias crap, and put it in reqInfo structure
+*) Why do we require full URLs in Redirect?  A local (root) url should work fine
+*) Redirect from .htaccess should work now (completely)
+*) Added hack to allow SSI of CGI, at a great expense of speed (CGI_SSI_HACK)
+*) Made getline() code re-entrant (now has its own sock_buf struct)
+
+
+
 Fixes for 1.5c
 ------------------
 *) add newline character to list of characters to strip from shell cmds
@@ -11,15 +64,6 @@ Fixes for 1.5c
 *) change getuid to geteuid in httpd.c so that effectively root people can
    start the server and have it change uids
 *) Fix group checking
-
-Fixes for 1.5b (internal)
-------------------
-*) Couple of off by one errors in the DBM support (server and support files)
-*) HP/Apollo Domain/OS support updated
-*) SCO ODT and SCO SVR3 support updated
-*) Typo in LOCALHACK
-*) No error message for NO_CONTENT default imagemap
-*) clean up after directory indexing (memory leak)
 
 Fixes for 1.5a
 -------------------

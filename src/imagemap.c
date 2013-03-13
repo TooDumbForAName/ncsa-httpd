@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * imagemap.c,v 1.7 1995/11/28 09:02:16 blong Exp
+ * imagemap.c,v 1.15 1996/04/05 19:14:19 blong Exp
  *
  ************************************************************************
  *
@@ -30,34 +30,60 @@
 #include <sys/stat.h>
 #include <ctype.h>
 #include "constants.h"
-#include "http_log.h"
 #include "fdwrap.h"
+#include "allocate.h"
+#include "http_log.h"
+#include "http_config.h"
+#include "http_request.h"
 #include "imagemap.h"
+#include "cgi.h"
+#include "util.h"
 
 #ifdef IMAGEMAP_SUPPORT 
 
-extern int port;
+/* Error messages for imagemaps */
 
-int send_imagemap(per_request* reqInfo, struct stat* fi, char* path_args,
-		  char allow_options)
+#define IMAP_ERR_INCORRECT_ARGS			1
+#define IMAP_ERR_INCORRECT_COORDS		2
+#define IMAP_ERR_CERN_MISSING_RIGHT_PAREN	3
+
+char *imagemap_errors[] = {
+"IMAP: Imagemap request requires two coordinates as arguments",
+"IMAP: Imagemap args missing y value",
+"IMAP: Imagemap args missing right paren"};
+
+
+/* NCSA Imagemap files use: method URL coord1 coord2
+ * CERN Imagemap files use: method (coord1) (coord2) URL
+ * This version of imagemap will probably work with either in the same file,
+ * as long as a full line is in one format or the other.
+ */
+int send_imagemap(per_request* reqInfo, struct stat* fi, char allow_options)
 {
-    char input[MAX_STRING_LEN], def[MAX_STRING_LEN];
-    char szPoint[MAX_STRING_LEN];
+    char *input, *def, *szPoint, *url, *type;
     double testpoint[2], pointarray[MAXVERTS][2];
     int i, j, k;
+    int error_num = 0;
     FILE *fp;
     char *t;
     double dist, mindist = -1;
     int sawpoint = 0;
+    int sawparen = 0;
+    int Found = 0;
+
     
+    input = newString(HUGE_STRING_LEN,STR_TMP);
+    def = newString(MAX_STRING_LEN,STR_TMP);
+    szPoint = newString(MAX_STRING_LEN,STR_TMP);
+    type = newString(MAX_STRING_LEN,STR_TMP);
+    url = newString(MAX_STRING_LEN,STR_TMP);
+
     def[0] = '\0';
     strcpy(szPoint, reqInfo->args);
 
     if(!(t = strchr(szPoint,','))) {
-        log_reason(reqInfo, 
-		   "Your client doesn't support image mapping properly.",
-		   reqInfo->filename);
-	die(reqInfo, SC_BAD_IMAGEMAP, reqInfo->url);
+        error_num = IMAP_ERR_INCORRECT_ARGS;
+	goto imagemap_error;
     }
 
     *t++ = '\0';
@@ -67,70 +93,114 @@ int send_imagemap(per_request* reqInfo, struct stat* fi, char* path_args,
     if(!(fp=FOpen(reqInfo->filename,"r"))){
 	log_reason(reqInfo, "File permissions deny server access",
 		   reqInfo->filename);
+        freeString(input);
+        freeString(def);
+        freeString(szPoint);
+        freeString(url);
+        freeString(type);
 	die(reqInfo, SC_FORBIDDEN, reqInfo->url);
     }
 
-    while (fgets(input,MAX_STRING_LEN,fp)) {
-        char type[MAX_STRING_LEN];
-        char url[MAX_STRING_LEN];
+    while (!Found && fgets(input,HUGE_STRING_LEN,fp)) {
         char num[10];
 
+        /* Skip lines with # as comments and blank lines */
         if((input[0] == '#') || (!input[0]))
             continue;
 
         type[0] = '\0';url[0] = '\0';
 
-        for(i=0;isname(input[i]) && (input[i]);i++)
+        /* Copy the shape keyword into type */
+        for(i=0;!isspace(input[i]) && (input[i]);i++)
             type[i] = input[i];
         type[i] = '\0';
 
+        /* Forward to next word */
         while(isspace(input[i])) ++i;
-        for(j=0;input[i] && isname(input[i]);++i,++j)
-            url[j] = input[i];
-        url[j] = '\0';
 
+        /* If no coordinates, must be url for default, or NCSA format  */
+	if (input[i] != '(') {
+          for(j=0;input[i] && !isspace(input[i]);++i,++j)
+            url[j] = input[i];
+          url[j] = '\0';
+        }
+
+	/* Handle default keyword */
         if(!strcmp(type,"default") && !sawpoint) {
             strcpy(def,url);
             continue;
         }
 
+        /* Looking for Coordinates */
         k=0;
         while (input[i]) {
+	    /* Move over spaces and commas */
             while (isspace(input[i]) || input[i] == ',')
                 i++;
+	    
+	    /* Under CERN, coordinates are in parenthesis */
+            if (input[i] == '(') {
+                sawparen = 1;
+                while (isspace(input[++i]));
+            }
+
+            /* Copy digits into num array */
+            j = 0;
+            while (isdigit(input[i]))
+                num[j++] = input[i++];
+
+            num[j] = '\0';
+            if (!j) break;
+            pointarray[k][X] = (double) atoi(num);
+
+            /* Skip to next digit */
+            while (isspace(input[i]) || input[i] == ',')
+                i++;
+            /* Copy other number into num */
             j = 0;
             while (isdigit(input[i]))
                 num[j++] = input[i++];
             num[j] = '\0';
-            if (num[0] != '\0')
-                pointarray[k][X] = (double) atoi(num);
-            else
-                break;
-            while (isspace(input[i]) || input[i] == ',')
-                i++;
-            j = 0;
-            while (isdigit(input[i]))
-                num[j++] = input[i++];
-            num[j] = '\0';
-            if (num[0] != '\0')
+
+            if (!j && !sawparen && k > 0) {
+              pointarray[k++][Y] = -127;
+              break;
+            }
+  
+            if (j)
                 pointarray[k++][Y] = (double) atoi(num);
             else {
-                FClose(fp);
-		log_reason(reqInfo, "Imagemap args missing y value.",
-			   reqInfo->filename);
-		die(reqInfo, SC_BAD_IMAGEMAP, reqInfo->url);
+		error_num = IMAP_ERR_INCORRECT_COORDS;
+	        FClose(fp);
+		goto imagemap_error;
             }
+            
+            /* End of parenthesis for coordinates under CERN */
+            if (input[i] == ')') {
+	      i++;
+	      sawparen = 0;
+	    } else if (sawparen) {
+	      error_num = IMAP_ERR_CERN_MISSING_RIGHT_PAREN;
+              FClose(fp);
+              goto imagemap_error;	
+	    }
+        }
+        if (url[0] == '\0' && input[i]) {
+          while (isspace(input[i])) i++;
+          for (j = 0; input[i] && !isspace(input[i]); ++i, ++j)
+             url[j] = input[i];
+          url[j] = '\0';
         }
         pointarray[k][X] = -1;
-        if(!strcmp(type,"poly"))
+        if(!strncmp(type, "poly", 4))
             if(pointinpoly(testpoint,pointarray))
-                sendmesg(reqInfo, url, fp);
-        if(!strcmp(type,"circle"))
+	       Found = 1;
+        if(!strncmp(type, "circ", 4))
             if(pointincircle(testpoint,pointarray))
-                sendmesg(reqInfo, url, fp);
-        if(!strcmp(type,"rect"))
+	      Found = 1;
+        if(!strncmp(type, "rect", 4))
             if(pointinrect(testpoint,pointarray))
-                sendmesg(reqInfo, url, fp);
+	      Found = 1;
         if(!strcmp(type,"point")) {
 	    /* Don't need to take square root. */
 	    dist = ((testpoint[X] - pointarray[0][X])
@@ -145,30 +215,70 @@ int send_imagemap(per_request* reqInfo, struct stat* fi, char* path_args,
 	    sawpoint++;
 	}
     }
-    if(def[0])
+    if(Found) {
+      sendmesg(reqInfo, url, fp);
+      goto imagemap_ok;
+    } else {
+      if(def[0]) {
         sendmesg(reqInfo, def, fp);
-
-    FClose(fp);
+	goto imagemap_ok;
+      }
+    }
 /* No reason to log each of these as an "error" */
 /*    log_reason(reqInfo, "No default defined in imagemap.",
 	       reqInfo->filename); */
+    FClose(fp);
+    freeString(input);
+    freeString(def);
+    freeString(szPoint);
+    freeString(url);
+    freeString(type);
     die(reqInfo, SC_NO_CONTENT, reqInfo->url);
     return 0;
+ 
+ imagemap_ok:
+    FClose(fp);
+    freeString(input);
+    freeString(def);
+    freeString(szPoint);
+    freeString(url);
+    freeString(type);
+    return 1;
+ 
+ imagemap_error:
+   freeString(input);
+   freeString(def);
+   freeString(szPoint);
+   freeString(url);
+   freeString(type);
+   log_reason(reqInfo,imagemap_errors[error_num-1],reqInfo->filename);
+   die(reqInfo,SC_BAD_IMAGEMAP,imagemap_errors[error_num-1]);
+   return -1;
 }
 
-void sendmesg(per_request* reqInfo, char *url, FILE* fp)
+void sendmesg(per_request* reqInfo, char *url, FILE *fp)
 {
-    char loc[HUGE_STRING_LEN];
+    char *loc, *furl;
+
+    loc = newString(HUGE_STRING_LEN,STR_REQ);
+    furl = newString(HUGE_STRING_LEN,STR_REQ);
 
     FClose(fp);
-    if (!strchr(url, ':')) {   /*** If not a full URL ***/
-	if (port == 80)                    /*** It is a virtual URL ***/
-	    sprintf(loc, "http://%s", reqInfo->hostInfo->server_hostname);
-	else   /* only add port if it's not the default */
-	    sprintf(loc, "http://%s:%d",reqInfo->hostInfo->server_hostname, 
-		    port);
-      strcat(loc,url);
-      die(reqInfo,SC_REDIRECT_TEMP,loc);
+    if (!strstr(url, "://")) {   /*** If not a full URL ***/
+      if (url[0] != '/') { /*** Relative URL ***/ 
+        char *last = strrchr(reqInfo->url,'/');
+        int x = 0, y = 0;
+        while (((reqInfo->url+x) <= last) && (y < HUGE_STRING_LEN)) {
+          loc[y] = *(reqInfo->url+x);
+          x++; y++;
+        }
+        loc[y] = '\0';
+	strncat(loc,url,HUGE_STRING_LEN - y);
+      } else {
+        strncpy(loc,url,HUGE_STRING_LEN);
+      }
+      construct_url(furl, reqInfo->hostInfo, loc);
+      die(reqInfo,SC_REDIRECT_TEMP,furl);
     } else {
       die(reqInfo,SC_REDIRECT_TEMP,url);
     }
@@ -184,11 +294,16 @@ int pointincircle(double point[2], double coords[MAXVERTS][2])
 {
         int radius1, radius2;
 
-        radius1 = ((coords[0][Y] - coords[1][Y]) * (coords[0][Y] -
-        coords[1][Y])) + ((coords[0][X] - coords[1][X]) * (coords[0][X] -
-        coords[1][X]));
+        /* If given a radius instead of a coordinate */
+        if (coords[1][Y] == -127)
+          radius1 = coords[1][X];
+        else
+          radius1 = ((coords[0][Y] - coords[1][Y]) * 
+                     (coords[0][Y] - coords[1][Y])) + 
+                    ((coords[0][X] - coords[1][X]) * 
+                     (coords[0][X] - coords[1][X]));
         radius2 = ((coords[0][Y] - point[Y]) * (coords[0][Y] - point[Y])) +
-        ((coords[0][X] - point[X]) * (coords[0][X] - point[X]));
+                  ((coords[0][X] - point[X]) * (coords[0][X] - point[X]));
         return (radius2 <= radius1);
 }
 
@@ -256,11 +371,6 @@ int pointinpoly(double point[2], double pgon[MAXVERTS][2])
         }
         inside_flag = crossings & 0x01;
         return (inside_flag);
-}
-
-int isname(char c)
-{
-        return (!isspace(c));
 }
 
 #endif /* IMAGEMAP_SUPPORT */

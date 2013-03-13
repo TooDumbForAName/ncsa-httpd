@@ -27,7 +27,7 @@ INCLUDES = -I../src
 #--------------------------------------------------------------------------
 
 SUPPORT = htpasswd unescape inc2shtml htdigest dbm2std std2dbm dbmdigest \
-	dbmgroup dbmpasswd
+	dbmgroup dbmpasswd webgrab
 .c.o: 
 	$(CC) -c $(CFLAGS) $(INCLUDES) $<
 
@@ -60,6 +60,9 @@ next:
 osf1:
 	make all CC=cc CFLAGS="-DOSF1"
 
+sco5:
+	make all CC=cc CFLAGS="-DSCO5" EXTRA_LIBS="-ldbm -lsocket"
+
 sgi4: 
 	make all CC=cc CFLAGS="-DIRIX -DHEAD_GETPASS"
 
@@ -67,14 +70,14 @@ sgi5:
 	make all CC=cc CFLAGS="-DIRIX"
 
 solaris:
-	make all CC=gcc CFLAGS="-DSOLARIS2"
+	make all CC=gcc CFLAGS="-DSOLARIS2" EXTRA_LIBS="-lnsl -lsocket"
 
 sunos:
 	make all CC=gcc CFLAGS="-DSUNOS"
 
 svr4:
 	make all CC=cc CFLAGS="-I/usr/include -I/usr/ucbinclude -DSVR4" \
-	 EXTRA_LIBS="-lc -L/usr/ucblib -ldbm -lucb"
+	 EXTRA_LIBS="-lc -L/usr/ucblib -ldbm -lucb -lnsl -lsocket"
 
 ultrix:
 	make all CC=gcc CFLAGS="-DULTRIX"
@@ -114,6 +117,8 @@ unescape: unescape.c
 inc2shtml: inc2shtml.c
 	$(CC) $(CFLAGS) $(INCLUDES) inc2shtml.c -o inc2shtml
 
+webgrab: webgrab.c
+	$(CC) $(CFLAGS) $(INCLUDES) webgrab.c -o webgrab $(EXTRA_LIBS)
 clean:
 	rm -f $(SUPPORT) $(DIGESTOBJS) tags TAGS *.o
 

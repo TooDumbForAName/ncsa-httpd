@@ -10,25 +10,17 @@
  *
  ************************************************************************
  *
- * http_access.h,v 1.12 1996/02/22 23:46:41 blong Exp
+ * blackout.h,v 1.1 1996/02/08 18:01:02 blong Exp
  *
  ************************************************************************
  *
  */
 
-#ifndef _HTTP_ACCESS_H_
-#define _HTTP_ACCESS_H_
+#ifndef _BLACKOUT_H
+#define _BLACKOUT_H
 
-#include <sys/stat.h>
-/* globals defined in this module */
+/* function prototypes */
+long send_fp_black(per_request *reqInfo, FILE *f, void (*onexit)(void));
 
-#define FA_DENY 0
-#define FA_ALLOW 1
+#endif /* _BLACKOUT_H */
 
-/* http_access function prototypes */
-void evaluate_access(per_request *reqInfo, struct stat *finfo,int *allow, 
-                            char *op);
-void kill_security(void);
-void reset_security(void);
-
-#endif /* _HTTP_ACCESS_H_ */

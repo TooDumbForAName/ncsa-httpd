@@ -28,9 +28,11 @@ Vince Tkac (tkac@oclc.org)
 Elf Sternberg (elf@aaden.spry.com)
 Nathan Neulinger (nneul@umr.edu)
 Stuart Lynne (sl@wimsey.com)
+Martin Hamilton (martin@net.lut.ac.uk)
+Tim Hudson (tjh@mincom.oz.au)				SSL
 
 And for Porting information/help:
-Alex Podlecki (a.podlecki@att.com)			SVR4
+Alex Podlecki (apodlecki@lucent.com)			SVR4
 Sanj Kharbanda (sanj@wordsworth.com) 			QNX
 Jeffrey Ray Thieleke (thieleke@icaen.uiowa.edu)		NetBSD for m68k	
 David Cornejo (dave@dogwood.com)			NetBSD
@@ -46,6 +48,7 @@ Eugene Mah (eugene@raddi.uah.ualberta.ca)		NeXT 3.2 m68k
 Kevin Steves (stevesk@mayfield.hp.com)			HPUX
 Vincent D. Skahan (vds7789@aw101.iasl.ca.boeing.com)	HP/Apollo DomainOS
 Achille Hui (eillihca@drizzle.stanford.edu)		OSF/1 2.0
+Huw Rogers (count0@iac.co.jp) 				Linux
 Miquel van Smoorenburg (miquels@cistron.nl) 		Linux
 A. P. Harris (apharris@onshore.com)			Linux
 Stan Johnson (johnson@mission.jsc.nasa.gov)		ConvexOS 10.1

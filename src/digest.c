@@ -53,6 +53,11 @@ int get_digest(per_request *reqInfo, char *user, char *realm, char *digest,
     char r[MAX_STRING_LEN];
 
     if (reqInfo->auth_digestfile_type == AUTHFILETYPE_STANDARD) {
+	if (reqInfo->auth_digestfile == NULL) {
+	    sprintf (errstr, "No digest file specified for URL: %s\n",
+	             reqInfo->url);
+	    die(reqInfo,SC_SERVER_ERROR,errstr);
+	}
 	if(!(f=FOpen(reqInfo->auth_digestfile,"r"))) {
 	    sprintf(errstr,"Could not open digest file %s",
 		    reqInfo->auth_digestfile);
@@ -202,7 +207,7 @@ void Digest_Check(per_request *reqInfo, char *user, security_data* sec)
     opaque[0] = 0;
     p = q = NULL;
     
-    p = auth_line;
+    p = reqInfo->inh_auth_line;
     while (isspace(*p))	{
 	p++;
     }

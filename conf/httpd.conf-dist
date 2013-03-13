@@ -160,13 +160,13 @@ AccessConfig conf/access.conf
 
 LogOptions Separate
 
-# LogDirGroupWriteOk, LogDirPublicWriteOk: Define either of these if you 
+# LogDirGroupWriteOk, LogDirOtherWriteOk: Define either of these if you 
 # want the server to start even if you have write permissions on the log
 # directory.  Having write permissions set is a potential security hole.
 # Only makes a difference if the server process is started by root.
 
 #LogDirGroupWriteOk
-#LogDirPublicWriteOk
+#LogDirOtherWriteOk
 
 # RefererIgnore: If you don't want to keep track of links from certain
 # servers (like your own), place it here.  If you want to log them all,

@@ -10,25 +10,14 @@
  *
  ************************************************************************
  * 
- * http_send.c,v 1.22 1995/11/28 09:02:09 blong Exp
+ * http_send.c,v 1.34 1996/04/05 18:55:06 blong Exp
  *
  ************************************************************************
  *
  * http_send.c: handles sending of regular files and determining which
  *		type of request it is if its not for a regular file
  *
- * Based on NCSA HTTPd 1.3 by Rob McCool
  * 
- * 04-08-95  blong
- *	Fixed security hole which allowed a trailing slash on CGI_MAGIC_TYPE
- *	cgi anywhere scripts to send back the script contents.  Now the
- *	trailing slash is added to the PATH_INFO, and the script is run.
- *	Oh yeah, and don't forget about directories.
- *
- * 09-01-95  blong
- *	Fixed bug under AIX 3.2.5 where last part of file is garbled using
- *	fwrite, but works fine with write.  I didn't say I understood it,
- *	but the fix seems to work.
  */
 
 
@@ -39,6 +28,13 @@
 #ifndef NO_STDLIB_H
 # include <stdlib.h>
 #endif /* NO_STDLIB_H */
+#ifdef HAVE_STDARG
+# include <stdarg.h>
+#else 
+# ifdef HAVE_VARARGS
+#  include <varargs.h>
+# endif /* HAVE_VARARGS */
+#endif /* HAVE_STDARG */
 #include <string.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -47,6 +43,7 @@
 #include <ctype.h>
 #include "constants.h"
 #include "fdwrap.h"
+#include "allocate.h"
 #include "http_send.h"
 #include "cgi.h"
 #include "imagemap.h"
@@ -60,17 +57,16 @@
 #include "http_dir.h"
 #include "httpd.h"
 #include "util.h"
+#include "blackout.h"
+#ifdef FCGI_SUPPORT
+# include "fcgi.h"
+#endif /* FCGI_SUPPORT */
 
-
-int num_includes;
-
-static void (*exit_callback)(void);
+void (*exit_callback)(void);
 
 void send_node(per_request *reqInfo) 
 {
     struct stat finfo;
-    char pa[MAX_STRING_LEN];
-    int length = 0;
     register x = 0;
     int allow;
     char allow_options;
@@ -78,32 +74,32 @@ void send_node(per_request *reqInfo)
 
     exit_callback = NULL;
 
-/* Remove all but 1 of the trailing slashes from the filename in order
-   to fix security hole.  Place them in the path alias (pa) array */
+/* It is no longer necessary to move all but one of the trailing slashes
+ * to the path_info string, since all multiple slashes are now compressed
+ * to one as a security precaution.
+ */
 
- 
-    length = strlen(reqInfo->filename);
-    while ((length>1) && (reqInfo->filename[length-1] == '/') && 
-	   (reqInfo->filename[length-2] == '/') && (x < MAX_STRING_LEN)) {
-	pa[x] = '/';
-	x++;
-	reqInfo->filename[length-1] = '\0';
-	length--;
-    }
-    pa[x] = '\0';
     if(stat(reqInfo->filename,&finfo) == -1) {
-	if ((ErrReturn = extract_path_info(reqInfo,pa,&finfo))) {
-	    if(ErrReturn == ENOENT) {
-		log_reason(reqInfo,"file does not exist",reqInfo->filename);
-		die(reqInfo,SC_NOT_FOUND,reqInfo->url);
-	    } else {
-		log_reason(reqInfo,"(3) file permissions deny server access",
-			   reqInfo->filename);
-		die(reqInfo,SC_FORBIDDEN,reqInfo->url);
-	    }
-	}
+	ErrReturn = extract_path_info(reqInfo,&finfo);
     }
     evaluate_access(reqInfo,&finfo,&allow,&allow_options);
+    if (ErrReturn) {
+        if(ErrReturn == ENOENT) {
+	  log_reason(reqInfo,"file does not exist",reqInfo->filename);
+	  die(reqInfo,SC_NOT_FOUND,reqInfo->url);
+/* Check for AFS/NFS problems, and send back an unavailable message instead
+ * Larry Schwimmer (schwim@cyclone.stanford.edu)
+ */
+        } else if ((ErrReturn == ETIMEDOUT) || (ErrReturn == ENODEV)) {
+	  log_reason(reqInfo, "file temporarily unavailable",
+	             reqInfo->filename);
+	  die(reqInfo,SC_SERVICE_UNAVAIL,reqInfo->url);
+	} else {
+	  log_reason(reqInfo,"(3) file permissions deny server access",
+		   reqInfo->filename);
+	  die(reqInfo,SC_FORBIDDEN,reqInfo->url);
+	}
+    }
     if(!allow) {
         log_reason(reqInfo,"client denied by server configuration",
 		   reqInfo->filename);
@@ -111,17 +107,30 @@ void send_node(per_request *reqInfo)
     }
 
     if (S_ISDIR(finfo.st_mode)) {
-	send_dir(reqInfo,&finfo,pa,allow_options);
+	send_dir(reqInfo,&finfo,allow_options);
     } else if (S_ISREG(finfo.st_mode)) {
+	x = strlen(reqInfo->filename);
+	/* Remove the trailing slash if its not a directory */
+	if (reqInfo->filename[x-1] == '/') {
+	  if (reqInfo->path_info[0] == '\0') {
+	    reqInfo->path_info[0] = '/';
+	    reqInfo->path_info[1] = '\0';
+          }
+	  reqInfo->filename[x-1] = '\0';
+        }
 	probe_content_type(reqInfo,reqInfo->filename);
-	if (!strcmp(content_type, CGI_MAGIC_TYPE))
-	    send_cgi(reqInfo,&finfo,pa,allow_options);
+	if (!strcmp(reqInfo->outh_content_type, CGI_MAGIC_TYPE))
+	    send_cgi(reqInfo,&finfo,allow_options);
 #ifdef IMAGEMAP_SUPPORT
-	else if (!strcmp(content_type, IMAGEMAP_MAGIC_TYPE))
-	    send_imagemap(reqInfo,&finfo,pa,allow_options);
+	else if (!strcmp(reqInfo->outh_content_type, IMAGEMAP_MAGIC_TYPE))
+	    send_imagemap(reqInfo,&finfo,allow_options);
 #endif /* IMAGEMAP_SUPPORT */
+#ifdef FCGI_SUPPORT
+	else if (!strcmp(reqInfo->outh_content_type, FCGI_MAGIC_TYPE))
+	    FastCgiHandler(reqInfo);
+#endif /* FCGI_SUPPORT */
 	else
-	    send_file(reqInfo,&finfo,pa,allow_options);
+	    send_file(reqInfo,&finfo,allow_options);
     } else {
 	log_reason(reqInfo,"improper file type",reqInfo->filename);
 	/* device driver or pipe, no permission */
@@ -129,10 +138,12 @@ void send_node(per_request *reqInfo)
     }
 }
 
-void send_file(per_request *reqInfo, struct stat *fi, 
-               char *path_args, char allow_options) 
+void send_file(per_request *reqInfo, struct stat *fi, char allow_options) 
 {
     FILE *f;
+#ifdef BLACKOUT_CODE
+    int isblack = FALSE;
+#endif /* BLACKOUT_CODE */    
 
     if ((reqInfo->method != M_GET) && (reqInfo->method != M_HEAD)) {
 	sprintf(error_msg,"%s to non-script",methods[reqInfo->method]);
@@ -140,23 +151,22 @@ void send_file(per_request *reqInfo, struct stat *fi,
     }
     set_content_type(reqInfo,reqInfo->filename);
 
-    if((allow_options & OPT_INCLUDES) && (!content_encoding[0])) {
+    if((allow_options & OPT_INCLUDES) && (!reqInfo->outh_content_encoding[0])) {
 #ifdef XBITHACK
         if((fi->st_mode & S_IXUSR) ||
-           (!strcmp(content_type,INCLUDES_MAGIC_TYPE))) {
+           (!strcmp(reqInfo->outh_content_type,INCLUDES_MAGIC_TYPE))) {
 #else
-	if(!strcmp(content_type,INCLUDES_MAGIC_TYPE)) {
+	if(!strcmp(reqInfo->outh_content_type,INCLUDES_MAGIC_TYPE)) {
 #endif /* XBITHACK */
 	    reqInfo->bytes_sent = 0;
-	    send_parsed_file(reqInfo,path_args,
-			     allow_options & OPT_INCNOEXEC);
+	    send_parsed_file(reqInfo, allow_options & OPT_INCNOEXEC);
 	    log_transaction(reqInfo);
 	    return;
 	}
     }
-    if (path_args[0]) {
-	strcat(reqInfo->filename,path_args);
-	strcat(reqInfo->url,path_args);
+    if (reqInfo->path_info[0]) {
+	strcat(reqInfo->filename,reqInfo->path_info);
+	strcat(reqInfo->url,reqInfo->path_info);
 	sprintf(error_msg,"No file matching URL: %s",reqInfo->url);
 	log_reason(reqInfo, error_msg, reqInfo->filename);
 	die(reqInfo,SC_NOT_FOUND,reqInfo->url);
@@ -181,49 +191,75 @@ void send_file(per_request *reqInfo, struct stat *fi,
       }
     }
     reqInfo->bytes_sent = 0;
-    if(!no_headers) {
+
+#ifdef BLACKOUT_CODE
+    if (!strcmp(reqInfo->outh_content_type,BLACKOUT_MAGIC_TYPE)) {
+      isblack = TRUE;
+      strcpy(reqInfo->outh_content_type,"text/html");
+    }
+#endif /* BLACKOUT_CODE */
+
+    if(reqInfo->http_version != P_HTTP_0_9) {
+      /* No length dependent headers since black is parsed */
+#ifdef BLACKOUT_CODE
+      if (isblack == FALSE) { 
+#endif /* BLACKOUT_CODE */
+#ifdef CONTENT_MD5
+	reqInfo->outh_content_md5 = (unsigned char *)md5digest(f);
+#endif /* CONTENT_MD5 */
 	set_content_length(reqInfo,fi->st_size);
 	if (set_last_modified(reqInfo,fi->st_mtime)) {
 	    FClose(f);
 	    return;
 	}
-	send_http_header(reqInfo);
+      }
+      if (reqInfo->http_version != P_HTTP_0_9) {
+           send_http_header(reqInfo);
+      }
+#ifdef BLACKOUT_CODE
     }
+#endif /* BLACKOUT_CODE */
 
-    num_includes = 0;	
-    if(!header_only) 
+    if(reqInfo->method != M_HEAD) {
+#ifdef BLACKOUT_CODE
+      if (isblack == TRUE)
+	send_fp_black(reqInfo,f,NULL);
+       else
+#endif /* BLACKOUT_CODE */
 	send_fp(reqInfo,f,NULL);
+    }
     log_transaction(reqInfo);
     FClose(f);
 }
 
-/* Globals for speed */
-static char ifile[HUGE_STRING_LEN];
-static char temp_name[HUGE_STRING_LEN];
 
-void send_dir(per_request *reqInfo,struct stat *finfo, char *pa, 
-	      char allow_options) {
+void send_dir(per_request *reqInfo,struct stat *finfo, char allow_options) {
   char *name_ptr, *end_ptr;
+  char *ifile, *temp_name;
+
+  ifile = newString(HUGE_STRING_LEN,STR_TMP);
+  temp_name = newString(HUGE_STRING_LEN,STR_TMP);
 
 /* Path Alias (pa) array should now have the trailing slash */
   /*  if (pa[0] != '/') { */
   if ((reqInfo->filename[strlen(reqInfo->filename) - 1] != '/') && 
-      (pa[0] != '/')) {
-    char url[HUGE_STRING_LEN];
+      (reqInfo->path_info[0] != '/')) {
     strcpy_dir(ifile,reqInfo->url);
-    construct_url(url,reqInfo->hostInfo,ifile);
-    escape_url(url);
-    die(reqInfo,SC_REDIRECT_PERM,url);
+    construct_url(temp_name,reqInfo->hostInfo,ifile);
+    escape_url(temp_name);
+    die(reqInfo,SC_REDIRECT_PERM,temp_name);
   }
 
   /* Don't allow PATH_INFO to directory indexes as a compromise for 
      error messages for files which don't exist */
 
-  if ((pa[0] != '\0') || (strlen(pa) > 1)) {
-        strcat(reqInfo->filename,pa);
-        strcat(reqInfo->url,pa);
+  if ((reqInfo->path_info[0] != '\0') || (strlen(reqInfo->path_info) > 1)) {
+        strcat(reqInfo->filename,reqInfo->path_info);
+        strcat(reqInfo->url,reqInfo->path_info);
         sprintf(error_msg,"No file matching URL: %s",reqInfo->url);
         log_reason(reqInfo, error_msg, reqInfo->filename);
+	freeString(temp_name);
+	freeString(ifile);
         die(reqInfo,SC_NOT_FOUND,reqInfo->url);
   }
     
@@ -243,30 +279,40 @@ void send_dir(per_request *reqInfo,struct stat *finfo, char *pa,
     make_full_path(reqInfo->filename,name_ptr,ifile);
     if(stat(ifile,finfo) == -1) {
       if(! *end_ptr && (allow_options & OPT_INDEXES)) {
-        if (pa[0]) {
-          strcat(reqInfo->filename,pa);
-	  strcat(reqInfo->url,pa);
+        if (reqInfo->path_info[0]) {
+          strcat(reqInfo->filename,reqInfo->path_info);
+	  strcat(reqInfo->url,reqInfo->path_info);
 	  log_reason(reqInfo,"file does not exist",reqInfo->filename);
+	  freeString(ifile);
+	  freeString(temp_name);
 	  die(reqInfo,SC_NOT_FOUND,reqInfo->url);
 	}
 	if ((reqInfo->method != M_GET) && (reqInfo->method != M_HEAD)) {
 	  sprintf(error_msg,"%s to non-script",methods[reqInfo->method]);
+	  freeString(ifile);
+	  freeString(temp_name);
 	  die(reqInfo,SC_NOT_IMPLEMENTED,error_msg);
 	}	
 	index_directory(reqInfo);
+	freeString(ifile);
+	freeString(temp_name);
 	return;
       } else if (! *end_ptr) {
 	log_reason(reqInfo,"(2) file permissions deny server access",
 		   reqInfo->filename);
+	freeString(ifile);
+	freeString(temp_name);
 	die(reqInfo,SC_FORBIDDEN,reqInfo->url);
       }
     } else {
       strcpy(reqInfo->filename,ifile);
       probe_content_type(reqInfo,reqInfo->filename);
-      if(!strcmp(content_type,CGI_MAGIC_TYPE))
-	send_cgi(reqInfo,finfo,pa,allow_options);
+      if(!strcmp(reqInfo->outh_content_type,CGI_MAGIC_TYPE))
+	send_cgi(reqInfo,finfo,allow_options);
       else
-	send_file(reqInfo,finfo,pa, allow_options);
+	send_file(reqInfo,finfo,allow_options);
+      freeString(ifile);
+      freeString(temp_name);
       return;
     }
     name_ptr = end_ptr;
@@ -274,45 +320,162 @@ void send_dir(per_request *reqInfo,struct stat *finfo, char *pa,
 }
 
 /* Search down given translated URL searching for actual file name and filling
-   in path_args string.  Doesn't make any claims about file type, must be 
-   handled elsewhere.
-   Returns 0 on success, errno on failure
-   */
-int extract_path_info(per_request *reqInfo, char *path_args,
-		       struct stat *finfo)
+ * in path_info string.  Doesn't make any claims about file type, must be 
+ * handled elsewhere.
+ * Returns 0 on success, errno on failure
+ */
+int extract_path_info(per_request *reqInfo, struct stat *finfo)
   {
     register int x,max;
-    char t[HUGE_STRING_LEN];
+    char *str;
+    int l,u;
+
+    str = newString(HUGE_STRING_LEN,STR_TMP);
 
     max=count_dirs(reqInfo->filename);
     for(x=max ; x > 0 ; x--) {
-        make_dirstr(reqInfo->filename,x+1,t);
-        if(!(stat(t,finfo))) {
-	  int l=strlen(t);
-	  strcat(path_args,&(reqInfo->filename[l]));
+        make_dirstr(reqInfo->filename,x+1,str);
+	l=strlen(str);
+	u=strlen(reqInfo->url);
+        if(!(stat(str,finfo)) &&
+	    !strcmp(reqInfo->filename+l, reqInfo->url+u-strlen(reqInfo->filename+ l))) 
+	{
+	  strcat(reqInfo->path_info,&(reqInfo->filename[l]));
 	  reqInfo->filename[l] = '\0';
-	  reqInfo->url[strlen(reqInfo->url) - strlen(path_args)] = '\0';
+	  reqInfo->url[strlen(reqInfo->url) - strlen(reqInfo->path_info)]='\0';
+	  freeString(str);
 	  return 0;
         }
     }
+    freeString(str);
     return errno;
 }
 
+
+/* Dump the headers of the per_request structure to the client.
+ * Will also set the status line if it hasn't already been set,
+ *  will set to 302 if location, 401 if auth required, 200 otherwise.
+ * Will dump the following headers:
+ * Date                         GMT Date in rfc 822 format
+ * Server                       SERVER_VERSION
+ * Annotations-cgi              reqInfo->hostInfo->annotation_server
+ * Location                     reqInfo->outh_location
+ * Last-modified                reqInfo->outh_last_mod
+ * Content-type                 reqInfo->outh_content_type
+ * Content-length               reqInfo->outh_content_length
+ * Content-encoding             reqInfo->outh_content_encoding
+ * Content-MD5                  reqInfo->outh_content_md5
+ * WWW-Authenticate             reqInfo->outh_www_auth
+ * Extension: Domain-Restricted reqInfo->bNotifyDomainRestricted && 
+ *                              reqInfo->bSatisfiedDomain
+ * Connection: Keep-Alive       keep_alive. stuff
+ * Keep-Alive: max= timeout=    same
+ * other headers from CGI       reqInfo->outh_cgi
+ * We don't dump the MIME-Version header that NCSA HTTP/1.3 did, because
+ * the server is not mime-compliant.
+ *
+ * Should we only give back HTTP/1.0 headers to 1.0 clients?  The docs are
+ * unclear on this, and almost all clients (even ones supporting 1.1 features)
+ * are sending HTTP/1.0 anyways, so we will for now.
+ */
+
+void send_http_header(per_request *reqInfo) 
+{
+    if(!reqInfo->status_line) {
+       /* Special Cases */
+        if(reqInfo->outh_location[0])
+            reqInfo->status = SC_REDIRECT_TEMP;
+	if(reqInfo->outh_www_auth[0])
+	    reqInfo->status = SC_AUTH_REQUIRED;
+	set_stat_line(reqInfo);
+    }    
+    rprintf(reqInfo,"%s %s%c%c",protocals[reqInfo->http_version],
+	    reqInfo->status_line,CR,LF);
+    rprintf(reqInfo,"Date: %s%c%c",gm_timestr_822(time(NULL)),CR,LF);
+    rprintf(reqInfo,"Server: %s%c%c",SERVER_VERSION,CR,LF);
+    if (reqInfo->hostInfo->annotation_server[0])
+	rprintf(reqInfo,"Annotations-cgi: %s%c%c",
+		reqInfo->hostInfo->annotation_server,CR,LF);
+
+    if(reqInfo->outh_location[0])
+        rprintf(reqInfo,"Location: %s%c%c",
+		reqInfo->outh_location,CR,LF);
+    if(reqInfo->outh_last_mod[0])
+        rprintf(reqInfo,"Last-modified: %s%c%c",
+		reqInfo->outh_last_mod,CR,LF);
+
+    if(reqInfo->outh_content_type[0]) 
+        rprintf(reqInfo,"Content-type: %s%c%c",
+	        reqInfo->outh_content_type,CR,LF);
+
+/* If we know the content_length, we can fulfill byte range requests */
+    if(reqInfo->outh_content_length >= 0) {
+/* Not yet, working on it */
+/*	rprintf(reqInfo,"Accept-Ranges: bytes%c%c",CR,LF); */
+        rprintf(reqInfo,"Content-length: %d%c%c",
+		reqInfo->outh_content_length,CR,LF);
+    }
+    if(reqInfo->outh_content_encoding[0])
+        rprintf(reqInfo,"Content-encoding: %s%c%c",
+		reqInfo->outh_content_encoding,CR,LF);
+#ifdef CONTENT_MD5
+    if(reqInfo->outh_content_md5)
+	rprintf(reqInfo,"Content-MD5: %s%c%c", 
+		reqInfo->outh_content_md5,CR,LF);
+#endif /* CONTENT_MD5 */
+
+    if(reqInfo->outh_www_auth[0])
+	rprintf(reqInfo,"WWW-Authenticate: %s%c%c", 
+		reqInfo->outh_www_auth,CR,LF);
+
+    if (reqInfo->bNotifyDomainRestricted && reqInfo->bSatisfiedDomain)
+	rprintf(reqInfo,"Extension: Domain-Restricted%c%c",CR,LF);
+
+    keep_alive.bKeepAlive = keep_alive.bKeepAlive && 
+			    (reqInfo->outh_content_length >= 0);
+    if (keep_alive.bKeepAlive && (!keep_alive.nMaxRequests ||
+				  keep_alive.nCurrRequests + 1 < 
+				  keep_alive.nMaxRequests)) {
+	keep_alive.bKeepAlive = 1;
+	rprintf(reqInfo,
+		"Connection: Keep-Alive%c%cKeep-Alive: max=%d, timeout=%d%c%c",
+		CR,LF, keep_alive.nMaxRequests, keep_alive.nTimeOut,CR,LF);
+    }
+    if(reqInfo->outh_cgi)
+        rprintf(reqInfo,"%s",reqInfo->outh_cgi);
+
+    rprintf(reqInfo,"%c%c",CR,LF);
+
+/* CLF doesn't include the headers, I don't think, so clear the information
+ * on what has been sent so far (byte count wise)
+ */
+    reqInfo->bytes_sent = 0;
+/*    rflush(reqInfo);   */
+}
+
+
+/* Time out function for send_fd and send_fp
+ * Logs whether an Abort or Time out occurs, logs how much has been sent,
+ * Does some cleanup (CloseAll) and either exits of jumps back
+ */
+
+
 void send_fd_timed_out(int sigcode) 
 {
-    char errstr[MAX_STRING_LEN];
+    char *errstr;
 
+    errstr = newString(HUGE_STRING_LEN,STR_TMP);
     if(exit_callback) (*exit_callback)();
     if (sigcode != SIGPIPE) {
-	sprintf(errstr,"httpd: send timed out for %s, URL: %s", 
-	(gCurrentRequest->remote_name ?
-          gCurrentRequest->remote_name : "remote host"),
-	(gCurrentRequest->url ? gCurrentRequest->url : "-"));
+	sprintf(errstr,"HTTPd: send timed out for %s, URL: %s", 
+		(gCurrentRequest->remote_name ? 
+		  gCurrentRequest->remote_name : "remote host"),
+		(gCurrentRequest->url ? gCurrentRequest->url : "-"));
     }
     else {
-	sprintf(errstr,"httpd: send aborted for %s, URL: %s", 
-                (gCurrentRequest->remote_name ?
-                  gCurrentRequest->remote_name : "remote host"),
+	sprintf(errstr,"HTTPd: send aborted for %s, URL: %s", 
+		(gCurrentRequest->remote_name ? 
+		  gCurrentRequest->remote_name : "remote host"),
 		(gCurrentRequest->url ? gCurrentRequest->url : "-"));
     }
     log_error(errstr,gCurrentRequest->hostInfo->error_log);
@@ -335,26 +498,33 @@ void send_fd_timed_out(int sigcode)
     }
 }
 
-/*
-  We'll make it return the number of bytes sent
-  so that we know if we need to send a body by default
-*/
+/* send_fp(): sends a file pointer to the socket.  Uses fread to read,
+ * but uses non-buffered I/O for writes (write())
+ *
+ * We'll make it return the number of bytes sent
+ * so that we know if we need to send a body by default
+ */
 long send_fp(per_request *reqInfo, FILE *f, void (*onexit)(void))
 {
-    char buf[IOBUFSIZE];
+    char *buf;
     long total_bytes_sent;
     register int n,o,w;
+    /* ADC hack ZZZZ */
+    /* blong Unused? */
+    /* int i; */
 
+    buf = newString(IOBUFSIZE,STR_TMP);
     exit_callback = onexit;
     signal(SIGALRM,send_fd_timed_out);
     signal(SIGPIPE,send_fd_timed_out);
 
     total_bytes_sent = 0;
-    fflush(reqInfo->out);
+    rflush(reqInfo);
     while (1) {
         alarm(timeout);
         if((n=fread(buf,sizeof(char),IOBUFSIZE,f)) < 1) {
 	   if (errno != EINTR) break;
+	    else errno = 0;
         }
 
         o=0;
@@ -366,18 +536,67 @@ long send_fp(per_request *reqInfo, FILE *f, void (*onexit)(void))
  *   For now, we'll just replace, but may have to #define one or the other
  *   depending on the system.
  */
-/*            w=fwrite(&buf[o],sizeof(char),n,reqInfo->out); */
-	    if ((w=write(fileno(reqInfo->out),&buf[o],n)) < 0) {
+              w = write(fileno(reqInfo->out),&buf[o],n);
+	    if (w < 0) {
 	      if (errno != EINTR) break;
+		else errno = 0;
 	    }
+				/* there goes ADC again...  ZZZZ */
+/*
+for (i = 0; i<w; i++) 
+   fputc(buf[o+i],stderr);
+fflush(stderr);
+*/
+
             n-=w;
             o+=w;
 	    total_bytes_sent += w;
         }
     }
-/*    fflush(reqInfo->out); */
     alarm(0);
     signal(SIGALRM,SIG_IGN);
     signal(SIGPIPE,SIG_IGN);
+    freeString(buf);
     return total_bytes_sent;
+}
+
+/* rprintf() will print out to the socket, using buffered I/O
+ */
+int rprintf(per_request *reqInfo, char *format, ...)
+{
+   va_list argList;
+   int x;
+
+#ifndef HAVE_VARARGS
+   va_start(argList,format);
+#else
+   va_start(argList);
+#endif /* HAVE_VARARGS */
+   x = vfprintf(reqInfo->out, format, argList);
+
+
+   va_end(argList);
+
+   reqInfo->bytes_sent += x;
+   return x;
+
+}
+
+/* rputs() for drop into fputs(), for now.
+ */
+int rputs(char *string, per_request *reqInfo)
+{
+  reqInfo->bytes_sent += strlen(string);
+  return fputs(string,reqInfo->out);
+}
+
+int rputc(int ch, per_request *reqInfo)
+{ 
+  (reqInfo->bytes_sent)++;
+  return putc(ch, reqInfo->out);
+}
+
+int rflush(per_request *reqInfo)
+{
+  return fflush(reqInfo->out);
 }

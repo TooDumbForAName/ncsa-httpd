@@ -6,6 +6,8 @@ httpd \- NCSA HTTPd (hypertext transfer protocol daemon)
 [
 .B \-v
 ] [
+.B \-X
+] [
 .BI \-d " serverroot"
 ] [
 .BI \-f " config"
@@ -32,6 +34,10 @@ the ServerRoot. The default is \fBconf/httpd.conf\fP.
 .B \-v
 Print the version of httpd, including compiled defaults and
 command line options.
+.TP
+.B \-X
+Execute in single request debugging mode, with no fork, no detach.  
+Useful for profiling and debugging.
 .SH FILES
 .PD 0
 .B /usr/local/etc/httpd/conf/httpd.conf

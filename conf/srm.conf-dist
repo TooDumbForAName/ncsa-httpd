@@ -44,6 +44,19 @@ Alias /icons/ /usr/local/etc/httpd/icons/
 ScriptAlias /cgi-bin/ /usr/local/etc/httpd/cgi-bin/
 
 #===========================================================================
+# OpenMarket's FCGI Support Options (http://www.fastcgi.com/
+#---------------------------------------------------------------------------
+# FCGIScritpAlias: Same as ScriptAlias, except for FCGI scripts
+# Format: FCGIScriptAlias fakename realname
+
+FCGIScriptAlias /fcgi-bin/ /usr/local/etc/httpd/fcgi-devel-kit/examples/
+
+# Define the AppClasses. These get hit when requests come in for
+# /fcgi-bin/tiny-fcgi.fcgi or /fcgi-bin/tiny-fcgi2.fcgi
+AppClass /usr/local/etc/httpd/fcgi-devel-kit/examples/tiny-fcgi.fcgi -listen-queue-depth 10 -processes 2
+AppClass /usr/local/etc/httpd/fcgi-devel-kit/examples/tiny-fcgi2.fcgi -listen-queue-depth 10 -processes 2
+
+#===========================================================================
 # Directory Indexing
 #---------------------------------------------------------------------------
 # If a user requests a document (URL) from your server ending in /, the
@@ -122,8 +135,8 @@ DefaultType text/plain
 # AddEncoding allows you to have certain browsers (Mosaic/X 2.1+) uncompress
 # information on the fly. Note: Not all browsers support this.
 
-#AddEncoding x-compress Z
-#AddEncoding x-gzip gz
+#AddEncoding compress Z
+#AddEncoding gzip gz
 
 # The following are known to the server as "Magic Mime Types"  They allow
 # you to change how the server perceives a document by the extension
@@ -137,6 +150,7 @@ DefaultType text/plain
 #AddType text/x-server-parsed-html .shtml
 #AddType text/x-imagemap .map
 #AddType application/x-httpd-cgi .cgi
+#AddType application/x-httpd-fcgi .fcgi
 
 #===========================================================================
 # Misc Server Resources

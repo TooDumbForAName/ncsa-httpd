@@ -12,12 +12,6 @@
  *
  * http_dir.c: Handles the on-the-fly html index generation
  * 
- * 03-23-93 Rob McCool
- *	Wrote base code up to release 1.3
- * 
- * 03-12-95 blong
- *      Added patch by Roy T. Fielding <fielding@avron.ICS.UCI.EDU>
- *      to fix missing trailing slash for parent directory 
  */
 
 
@@ -41,15 +35,16 @@
 #include <sys/types.h>
 #include <ctype.h>
 #include "constants.h"
+#include "http_request.h"
 #include "http_dir.h"
 #include "http_mime.h"
 #include "http_log.h"
 #include "http_config.h"
-#include "http_request.h"
 #include "http_send.h"
 #include "http_alias.h"
 #include "util.h"
 #include "fdwrap.h"
+#include "allocate.h"
 
 /* Split each item list into two lists, the 0-th entry holds items which 
  * are valid over this request while the 1-st entry for those valids for
@@ -62,21 +57,21 @@ static struct item *hdr_list[2], *rdme_list[2], *opts_list[2];
 static int dir_opts;
 
 void init_indexing(int local) {
-    icon_list[0] = NULL;
-    alt_list[0] = NULL;
-    desc_list[0] = NULL;
-    ign_list[0] = NULL;
-    hdr_list[0] = NULL;
-    rdme_list[0] = NULL;
-    opts_list[0] = NULL;
+    icon_list[FI_LOCAL] = NULL;
+    alt_list[FI_LOCAL] = NULL;
+    desc_list[FI_LOCAL] = NULL;
+    ign_list[FI_LOCAL] = NULL;
+    hdr_list[FI_LOCAL] = NULL;
+    rdme_list[FI_LOCAL] = NULL;
+    opts_list[FI_LOCAL] = NULL;
     if (local == FI_GLOBAL) {
-      icon_list[1] = NULL;
-      alt_list[1] = NULL;
-      desc_list[1] = NULL;
-      ign_list[1] = NULL;
-      hdr_list[1] = NULL;
-      rdme_list[1] = NULL;
-      opts_list[1] = NULL;
+      icon_list[FI_GLOBAL] = NULL;
+      alt_list[FI_GLOBAL] = NULL;
+      desc_list[FI_GLOBAL] = NULL;
+      ign_list[FI_GLOBAL] = NULL;
+      hdr_list[FI_GLOBAL] = NULL;
+      rdme_list[FI_GLOBAL] = NULL;
+      opts_list[FI_GLOBAL] = NULL;
     }
 }
 
@@ -262,38 +257,48 @@ char *find_item(per_request *reqInfo, struct item *list[2], char *path,
 {
     struct item *p = NULL;
     int i;
+    char *file_type,*file_encoding;
+
+    file_type = newString(MAX_STRING_LEN,STR_TMP);
+    file_encoding = newString(MAX_STRING_LEN,STR_TMP);
     
     for (i=0; i < 2; i++) {
       for (p = list[i]; p; p = p->next) {
         /* Special cased for ^^DIRECTORY^^ and ^^BLANKICON^^ */
         if((path[0] == '^') || (!strcmp_match(path,p->apply_path))) {
-	  if(!(p->apply_to))
-	    return p->data;
+	  if(!(p->apply_to)) 
+	    goto found_item;
 	  else if(p->type == BY_PATH) {
 	    if(!strcmp_match(path,p->apply_to))
-	      return p->data;
+	      goto found_item;
 	  } else if(!path_only) {
 	    char pathbak[MAX_STRING_LEN];
 	    
 	    strcpy(pathbak,path);
-	    content_encoding[0] = '\0';
-	    set_content_type(reqInfo,pathbak);
-	    if(!content_encoding[0]) {
+	    get_content_type(reqInfo,pathbak,file_type,file_encoding);
+	    if(!file_encoding[0]) {
 	      if(p->type == BY_TYPE) {
-		if(!strcmp_match(content_type,p->apply_to))
-		  return p->data;
+		if(!strcmp_match(file_type,p->apply_to)) 
+		  goto found_item;
 	      }
 	    } else {
 	      if(p->type == BY_ENCODING) {
-		if(!strcmp_match(content_encoding,p->apply_to))
-		  return p->data;
+		if(!strcmp_match(file_encoding,p->apply_to)) 
+		  goto found_item;
 	      }
 	    }
 	  }
         }
       }
     }
+    freeString(file_type);
+    freeString(file_encoding);
     return NULL;
+
+  found_item:
+    freeString(file_type);
+    freeString(file_encoding);
+    return p->data;
 }
 
 #define find_icon(r,p,t) find_item(r,icon_list,p,t)
@@ -342,16 +347,15 @@ int insert_readme(per_request *reqInfo, char *name,
         if(stat(fn,&finfo) == -1)
             return 0;
         plaintext=1;
-        if(rule) reqInfo->bytes_sent += fprintf(reqInfo->out,"<HR>%c",LF);
-        reqInfo->bytes_sent += fprintf(reqInfo->out,"<PRE>%c",LF);
+        if(rule) rprintf(reqInfo,"<HR>%c",LF);
+        rprintf(reqInfo,"<PRE>%c",LF);
     }
-    else if(rule) reqInfo->bytes_sent += fprintf(reqInfo->out,"<HR>%c",LF);
+    else if(rule) rprintf(reqInfo,"<HR>%c",LF);
     if(!(r = FOpen(fn,"r")))
         return 0;
     send_fp(reqInfo,r,NULL);
     FClose(r);
-    if(plaintext)
-        reqInfo->bytes_sent += fprintf(reqInfo->out,"</PRE>%c",LF);
+    if(plaintext) rprintf(reqInfo,"</PRE>%c",LF);
     return 1;
 }
 
@@ -361,15 +365,18 @@ char *find_title(per_request *reqInfo, char *filename) {
     char filebak[MAX_STRING_LEN];
     FILE *thefile;
     int x,y,n,p;
+    char *file_type, *file_encoding;
 
-    content_encoding[0] = '\0';
+    file_type = newString(MAX_STRING_LEN,STR_TMP);
+    file_encoding = newString(MAX_STRING_LEN,STR_TMP);
+
     strcpy(filebak,filename);
-    set_content_type(reqInfo,filebak);
-    if(((!strcmp(content_type,"text/html")) ||
-       (strcmp(content_type, INCLUDES_MAGIC_TYPE) == 0))
-       && (!content_encoding[0])) {
+    get_content_type(reqInfo,filebak,file_type,file_encoding);
+    if(((!strcmp(file_type,"text/html")) ||
+       (strcmp(file_type, INCLUDES_MAGIC_TYPE) == 0))
+       && (!file_encoding[0])) {
         if(!(thefile = FOpen(filename,"r")))
-            return NULL;
+	   goto not_found;
         n = fread(titlebuf,sizeof(char),MAX_STRING_LEN - 1,thefile);
         titlebuf[n] = '\0';
         for(x=0,p=0;titlebuf[x];x++) {
@@ -382,14 +389,17 @@ char *find_title(per_request *reqInfo, char *filename) {
                         if((titlebuf[y] == CR) || (titlebuf[y] == LF))
                             titlebuf[y] = ' ';
 		    FClose(thefile);
+		    freeString(file_type);
+		    freeString(file_encoding);
                     return strdup(&titlebuf[x]);
                 }
             } else p=0;
         }
 	FClose(thefile);
-        return NULL;
     }
-    content_encoding[0] = '\0';
+  not_found:
+    freeString(file_type);
+    freeString(file_encoding);
     return NULL;
 }
 
@@ -454,9 +464,10 @@ struct ent *make_dir_entry(per_request *reqInfo, char *path,
             p->alt = NULL;
             p->desc = NULL;
             if(S_ISDIR(finfo.st_mode)) {
-                if(!(p->icon = find_icon(reqInfo,t,1)))
+                if(!(p->icon = find_icon(reqInfo,t,1))) {
 		    if (p->icon != NULL) free(p->icon);
                     p->icon = find_icon(reqInfo,"^^DIRECTORY^^",1);
+                }
                 if(!(tmp = find_alt(reqInfo,t,1))){
                     p->alt = (char *) malloc(sizeof(char)*4);
                     strcpy(p->alt,"DIR");
@@ -495,22 +506,19 @@ struct ent *make_dir_entry(per_request *reqInfo, char *path,
 void send_size(per_request *reqInfo, size_t size) {
 
     if(size == -1) {
-        fputs("    -",reqInfo->out);
-        reqInfo->bytes_sent += 5;
+        rputs("    -",reqInfo);
     }
     else {
         if(!size) {
-            fputs("   0K",reqInfo->out);
-            reqInfo->bytes_sent += 5;
+            rputs("   0K",reqInfo);
         }
         else if(size < 1024) {
-            fputs("   1K",reqInfo->out);
-            reqInfo->bytes_sent += 5;
+            rputs("   1K",reqInfo);
         }
         else if(size < 1048576)
-            reqInfo->bytes_sent += fprintf(reqInfo->out,"%4dK",size / 1024);
+            rprintf(reqInfo,"%4dK",size / 1024);
         else
-            reqInfo->bytes_sent += fprintf(reqInfo->out,"%4dM",size / 1048576);
+            rprintf(reqInfo,"%4dM",size / 1048576);
     }
 }
 
@@ -550,36 +558,38 @@ void output_directories(per_request *reqInfo, struct ent **ar,int n,char *name)
         name[0] = '/'; name[1] = '\0'; 
     }
     /* aaaaargh Solaris sucks. */
-    fflush(reqInfo->out);
+    rflush(reqInfo);
 
     if(dir_opts & FANCY_INDEXING) {
-        fputs("<PRE>",reqInfo->out);
-        (reqInfo->bytes_sent) += 5;
+        rputs("<PRE>",reqInfo);
         if((tp = find_icon(reqInfo,"^^BLANKICON^^",1)))
-            reqInfo->bytes_sent += (fprintf(reqInfo->out,
-				   "<IMG SRC=\"%s\" ALT=\"     \"> ",tp));
-        reqInfo->bytes_sent += fprintf(reqInfo->out,"Name                   ");
+            rprintf(reqInfo,"<IMG SRC=\"%s\" ALT=\"     \"> ",tp);
+        rprintf(reqInfo,"Name                   ");
         if(!(dir_opts & SUPPRESS_LAST_MOD))
-            reqInfo->bytes_sent += fprintf(reqInfo->out,"Last modified     ");
+            rprintf(reqInfo,"Last modified     ");
         if(!(dir_opts & SUPPRESS_SIZE))
-            reqInfo->bytes_sent += fprintf(reqInfo->out,"Size  ");
+            rprintf(reqInfo,"Size  ");
         if(!(dir_opts & SUPPRESS_DESC))
-            reqInfo->bytes_sent += fprintf(reqInfo->out,"Description");
-        reqInfo->bytes_sent += fprintf(reqInfo->out,"%c<HR>%c",LF,LF);
+            rprintf(reqInfo,"Description");
+        rprintf(reqInfo,"%c<HR>%c",LF,LF);
     }
     else {
-        fputs("<UL>",reqInfo->out);
-        reqInfo->bytes_sent += 4;
+        rputs("<UL>",reqInfo);
     }
         
     for(x=0;x<n;x++) {
         if((!strcmp(ar[x]->name,"../")) || (!strcmp(ar[x]->name,".."))) {
+	    int i;
 
 /* Fixes trailing slash for fancy indexing.  Thanks Roy ? */
             make_full_path(name,"../",t);
             getparents(t);
             if(t[0] == '\0') {
                 t[0] = '/'; t[1] = '\0';
+            }
+	    i = strlen(t);
+	    if(t[i-1] != '/') {
+	      t[i-1] = '/'; t[i] = '\0';
             }
             escape_uri(t);
             sprintf(anchor,"<A HREF=\"%s\">",t);
@@ -602,59 +612,51 @@ void output_directories(per_request *reqInfo, struct ent **ar,int n,char *name)
 
         if(dir_opts & FANCY_INDEXING) {
             if(dir_opts & ICONS_ARE_LINKS)
-                reqInfo->bytes_sent += fprintf(reqInfo->out,"%s",anchor);
+                rprintf(reqInfo,"%s",anchor);
             if((ar[x]->icon) || reqInfo->hostInfo->default_icon[0] 
 		|| local_default_icon[0]) {
-                reqInfo->bytes_sent += fprintf(reqInfo->out,
-				      "<IMG SRC=\"%s\" ALT=\"[%s]\">",
-                                      ar[x]->icon ? ar[x]->icon :
-                                       local_default_icon[0] ?
-                                        local_default_icon : 
-					reqInfo->hostInfo->default_icon,
-                                      ar[x]->alt ? ar[x]->alt : "   ");
+                rprintf(reqInfo,"<IMG SRC=\"%s\" ALT=\"[%s]\">",
+                                ar[x]->icon ? ar[x]->icon :
+                                local_default_icon[0] ?
+                                local_default_icon : 
+				reqInfo->hostInfo->default_icon,
+                                ar[x]->alt ? ar[x]->alt : "   ");
             }
             if(dir_opts & ICONS_ARE_LINKS) {
-                fputs("</A>",reqInfo->out);
-                reqInfo->bytes_sent += 4;
+                rputs("</A>",reqInfo);
             }
-            reqInfo->bytes_sent += fprintf(reqInfo->out," %s",anchor);
-            reqInfo->bytes_sent += fprintf(reqInfo->out,"%-27.27s",t2);
+            rprintf(reqInfo," %s",anchor);
+            rprintf(reqInfo,"%-27.27s",t2);
             if(!(dir_opts & SUPPRESS_LAST_MOD)) {
                 if(ar[x]->lm != -1) {
                     struct tm *ts = localtime(&ar[x]->lm);
                     strftime(t,MAX_STRING_LEN,"%d-%b-%y %H:%M  ",ts);
-                    fputs(t,reqInfo->out);
-                    reqInfo->bytes_sent += strlen(t);
+                    rputs(t,reqInfo);
                 }
                 else {
-                    fputs("                 ",reqInfo->out);
-                    reqInfo->bytes_sent += 17;
+                    rputs("                 ",reqInfo);
                 }
             }
             if(!(dir_opts & SUPPRESS_SIZE)) {
                 send_size(reqInfo,ar[x]->size);
-                fputs("  ",reqInfo->out);
-                reqInfo->bytes_sent += 2;
+                rputs("  ",reqInfo);
             }
             if(!(dir_opts & SUPPRESS_DESC)) {
                 if(ar[x]->desc) {
                     terminate_description(ar[x]->desc);
-                    reqInfo->bytes_sent += fprintf(reqInfo->out,"%s",ar[x]->desc);
+                    rprintf(reqInfo,"%s",ar[x]->desc);
                 }
             }
         }
         else
-            reqInfo->bytes_sent += fprintf(reqInfo->out,"<LI> %s %s",anchor,t2);
-        fputc(LF,reqInfo->out);
-        ++(reqInfo->bytes_sent);
+            rprintf(reqInfo,"<LI> %s %s",anchor,t2);
+        rputc(LF,reqInfo);
     }
     if(dir_opts & FANCY_INDEXING) {
-        fputs("</PRE>",reqInfo->out);
-        reqInfo->bytes_sent += 6;
+        rputs("</PRE>",reqInfo);
     }
     else {
-        fputs("</UL>",reqInfo->out);
-        reqInfo->bytes_sent += 5;
+        rputs("</UL>",reqInfo);
     }
 }
 
@@ -678,12 +680,13 @@ void index_directory(per_request *reqInfo)
     if(!(d=Opendir(reqInfo->filename)))
         die(reqInfo,SC_FORBIDDEN,reqInfo->url);
 
-    strcpy(content_type,"text/html");
-    if(!no_headers) 
+    strcpy(reqInfo->outh_content_type,"text/html");
+    if(reqInfo->http_version != P_HTTP_0_9) 
         send_http_header(reqInfo);
 
-    if(header_only) {
+    if(reqInfo->method == M_HEAD) {
 	Closedir(d);
+        log_transaction(reqInfo);
 	return;
     }
 
@@ -692,16 +695,13 @@ void index_directory(per_request *reqInfo)
     dir_opts = find_opts(reqInfo->filename);
 
 /* Spew HTML preamble */
-    reqInfo->bytes_sent += fprintf(reqInfo->out,
-			  "<HEAD><TITLE>Index of %s</TITLE></HEAD><BODY>",
+    rprintf(reqInfo,"<HEAD><TITLE>Index of %s</TITLE></HEAD><BODY>",
                           reqInfo->url);
-    fputc(LF,reqInfo->out);
-    ++(reqInfo->bytes_sent);
+    rputc(LF,reqInfo);
 
     if((!(tmp = find_header(reqInfo, reqInfo->filename))) || 
 	(!(insert_readme(reqInfo,reqInfo->filename,tmp,0))))
-        reqInfo->bytes_sent += fprintf(reqInfo->out,
-			      "<H1>Index of %s</H1>%c",reqInfo->url,LF);
+        rprintf(reqInfo, "<H1>Index of %s</H1>%c",reqInfo->url,LF);
 
 /* 
  * Since we don't know how many dir. entries there are, put them into a 
@@ -750,13 +750,10 @@ void index_directory(per_request *reqInfo)
          if((tmp = find_readme(reqInfo,reqInfo->filename)))
              insert_readme(reqInfo,reqInfo->filename,tmp,1);
      else {
-         fputs("</UL>",reqInfo->out);
-         reqInfo->bytes_sent += 5;
+         rputs("</UL>",reqInfo);
      }
 
-     fputs("</BODY>", reqInfo->out);
-     fflush(reqInfo->out);
-     reqInfo->bytes_sent += 7;
-     fflush(reqInfo->out);
+     rputs("</BODY>", reqInfo);
+     rflush(reqInfo);
      log_transaction(reqInfo);
 }

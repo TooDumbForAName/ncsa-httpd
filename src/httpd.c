@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * httpd.c,v 1.115 1995/11/28 09:02:12 blong Exp
+ * httpd.c,v 1.131 1996/04/05 18:55:09 blong Exp
  *
  ************************************************************************
  *
@@ -18,36 +18,12 @@
  *
  * 
  * 03-21-93  Rob McCool wrote original code (up to NCSA HTTPd 1.3)
+ * 05-17-95  NCSA HTTPd 1.4.1
+ * 05-01-95  NCSA HTTPd 1.4.2
+ * 11-10-95  NCSA HTTPd 1.5.0
+ * 11-14-95  NCSA HTTPd 1.5.0a
+ * 03-21-96  NCSA HTTPd 1.5.0c
  * 
- * 03-06-95  blong
- *  changed server number for child-alone processes to 0 and changed name
- *   of processes
- *
- * 03-10-95  blong
- * 	Added numerous speed hacks proposed by Robert S. Thau (rst@ai.mit.edu) 
- *	including set group before fork, and call gettime before to fork
- * 	to set up libraries.
- *
- * 04-28-95  guillory
- *      Changed search pattern on child processes to better distribute load
- *
- * 04-30-95  blong
- *      added patch by Kevin Steves (stevesk@mayfield.hp.com) to fix
- *      rfc931 logging.  We were passing sa_client, but this information
- *      wasn't known yet at the time of the pass to the child.  Now uses
- *      getpeername in child_main to find this information.
- *
- * 08-16-95  blong
- *	added patch by Vince Tkac (tkac@oclc.org) to allow restart when
- *	a relative path is used on the command line with -f
- *
- * 10-26-95  blong
- *	added a RESOURCE_LIMIT compiletime option which limits the number
- *	of possible servers running to MaxServers
- *
- * 10-26-95  blong
- *	added patch by Stuart Lynne (sl@wimsey.com) to turn the proc title
- *	into a tachometer
  */
 
 
@@ -87,10 +63,11 @@
 # include <sys/select.h>
 #endif /* NEED_SELECT_H */
 #ifndef NO_SYS_RESOURCE_H
-#include <sys/resource.h>
+# include <sys/resource.h>
 #endif /* NO_SYS_RESOURCE_H */
 #include "constants.h"
 #include "fdwrap.h"
+#include "allocate.h"
 #include "httpd.h"
 #include "http_request.h"
 #include "http_config.h"
@@ -101,25 +78,31 @@
 #include "http_dir.h"
 #include "http_ipc.h"
 #include "http_mime.h"
+#include "http_send.h"
 #include "util.h"
 
-JMP_BUF jmpbuffer;
 JMP_BUF restart_buffer;
-int servernum=0;
 int mainSocket;
 pid_t pgrp;
+int debug_mode = FALSE;
+
+/* Current global information per child, will need to be made
+ * non-global for threading
+ */
+#ifndef NOT_READY
 int Child=0;
 int Alone=0;
-int csd = -1;
 /* To keep from being clobbered with setjmp */
-static per_request *reqInfo = NULL;
-
+JMP_BUF jmpbuffer;
+int csd = -1;
 KeepAliveData keep_alive;  /* global keep alive info */
+#endif /* NOT_READY */
+
+ChildInfo *Children;
+int num_children = 0;
 
 #ifndef NO_PASS
 char donemsg[]="DONE";
-ChildInfo *Children;
-int num_children = 0;
 #endif /* NO_PASS */
 
 #if defined(KRB4) || defined(KRB5)
@@ -135,7 +118,7 @@ void htexit(per_request *reqInfo, int status, int die_type)
     if(standalone || keep_alive.bKeepAlive) siglongjmp(jmpbuffer,die_type);
 #endif /* NO_SIGLONGJMP */
     else {
-	fflush(reqInfo->out);
+	rflush(reqInfo);
 	exit(status);
     }
 }
@@ -159,20 +142,20 @@ void detach(void)
     if((x = fork()) > 0)
         exit(0);
     else if(x == -1) {
-        fprintf(stderr,"httpd: unable to fork new process\n");
+        fprintf(stderr,"HTTPd: unable to fork new process\n");
         perror("fork");
         exit(1);
     }
 
 #ifndef NO_SETSID
     if((pgrp=setsid()) == -1) {
-        fprintf(stderr,"httpd: setsid failed\n");
+        fprintf(stderr,"HTTPd: setsid failed\n");
         perror("setsid");
         exit(1);
     }
 #else
     if((pgrp=setpgrp(getpid(),0)) == -1) {
-        fprintf(stderr,"httpd: setpgrp failed\n");
+        fprintf(stderr,"HTTPd: setpgrp failed\n");
         perror("setpgrp");
         exit(1);
     }
@@ -225,7 +208,7 @@ void seg_fault(void)
     close_all_logs();
     chdir(core_dir);
     abort();
-    exit(1);
+/*    exit(1); */
 }
 
 void dump_debug(void) {
@@ -234,6 +217,8 @@ void dump_debug(void) {
   log_error("HTTPd: caught USR1, dumping debugging information",
 	     gConfiguration->error_log);
 
+  fprintf(gConfiguration->error_log,"  ReqInfo: %d\tSockbuf: %d\tCGbuf: %d\n",
+	 req_count,sockbuf_count,cgibuf_count);
   tmp = gCurrentRequest;
   while (tmp != NULL) {
     fprintf(gConfiguration->error_log,"  Status: %d \t\t Bytes: %ld\n",tmp->status,
@@ -247,11 +232,11 @@ void dump_debug(void) {
     fprintf(gConfiguration->error_log,"  Host: %s \t IP: %s\n",
 		tmp->remote_host, tmp->remote_ip);
     fprintf(gConfiguration->error_log,"  Content-type: %s \t Content-Length: %d\n",
-		content_type, content_length);
+		tmp->outh_content_type, tmp->outh_content_length);
     fprintf(gConfiguration->error_log,"  Refererer: %s\n",
-		tmp->referer);
+		tmp->inh_referer);
     fprintf(gConfiguration->error_log,"  User Agent: %s\n",
-		tmp->agent);	
+		tmp->inh_agent);	
     if (tmp->hostInfo->server_hostname)
       fprintf(gConfiguration->error_log,"  ServerName: %s\n",
 		tmp->hostInfo->server_hostname);
@@ -266,7 +251,7 @@ void dump2(void)
 {
   log_error("HTTPd: caught USR2, dumping debugging information",
 	     gConfiguration->error_log);
-  purify_new_leaks();  
+  purify_new_leaks();   
 }
 #endif /* PURIFY */
     
@@ -333,6 +318,9 @@ void set_group_privs(void)
     fakeit.out = stdout;
     fakeit.hostInfo = gConfiguration;
 
+    /* Only change if root. Changed to geteuid() so that setuid scripts, etc
+     * can start the server and change from root 
+     */ 
     if (!geteuid()) {
 	/* Change standalone so that on error, we die, instead of siglongjmp */
 	tmp_stand = standalone;
@@ -370,6 +358,7 @@ void speed_hack_libs(void)
    char buf[MAX_STRING_LEN];
    
    strftime (buf, MAX_STRING_LEN, "%d/%b/%Y:%H:%M:%S", dummy_time);
+   strftime (buf, MAX_STRING_LEN, "%d/%b/%Y:%H:%M:%S", other_dummy_time);
 }
  
 /*
@@ -378,7 +367,7 @@ void speed_hack_libs(void)
  * another request is ready, or the timeout period is up.
  */
 
-int WaitForRequest (int csd, KeepAliveData *kad)
+int wait_keepalive(int csd, KeepAliveData *kad)
 {
     fd_set listen_set;
     struct timeval ka_timeout;
@@ -401,20 +390,31 @@ int WaitForRequest (int csd, KeepAliveData *kad)
     }
 }
 
-void CompleteRequest (per_request *reqInfo, int pipe)
+void CompleteRequest(per_request *reqInfo, int pipe)
 {
+
 /* Changed from shutdown(csd,2) to allow kernel to finish sending data 
-   required on OSF/1 2.0 (Achille Hui (eillihca@drizzle.stanford.edu)) */
-    shutdown(csd,0);
+ * required on OSF/1 2.0 (Achille Hui (eillihca@drizzle.stanford.edu)) */
+/*    shutdown(csd,0); */
+    shutdown(csd,2);
     close(csd);
 #ifndef NO_PASS
     if (pipe >= 0) { 
 	write(pipe,donemsg,sizeof(donemsg));
+        if (reqInfo != NULL) reqInfo->RequestFlags = 0;
+	free_request(reqInfo,NOT_LAST);
 	CloseAll();
+	freeAllStrings(STR_REQ);
 	kill_indexing(FI_LOCAL);
-	free_request(reqInfo,0);
+/*        current_process_size("CompleteRequest/2");  */
+#ifdef QUANTIFY
+/*	quantify_save_data(); */
+#endif /* QUANTIFY */
     } else
 #endif /* NO_PASS */
+#ifdef QUANTIFY
+/*	quantify_save_data(); */
+#endif /* QUANTIFY */
 #ifdef PROFILE
 	exit (2);
 #else
@@ -425,12 +425,20 @@ void CompleteRequest (per_request *reqInfo, int pipe)
 void child_alone(int csd, struct sockaddr_in *sa_server, 
 		 CLIENT_SOCK_ADDR *sa_client)
 {
+static per_request *reqInfo = NULL;
 
+#ifndef THREADED
     close(mainSocket);
+#endif /* THREADED */
+
 #ifdef PROFILE
     moncontrol(1);
 #endif /* PROFILE */
-
+#ifdef QUANTIFY
+/*    quantify_clear_data();  */
+    quantify_start_recording_data();
+#endif /* QUANTIFY */
+   
     Child = Alone = 1;
     standalone = 0;
     keep_alive.nCurrRequests = 0;
@@ -444,12 +452,12 @@ void child_alone(int csd, struct sockaddr_in *sa_server,
         }
     }
 
-
-    /* this should check error status, but it's not crucial */
+#ifndef THREADED
     close(0);
     close(1);	
     dup2(csd,0);
     dup2(csd,1);
+#endif /* THREADED */
     
     remote_logname = (!do_rfc931 ? NULL :
 		      rfc931((struct sockaddr_in *)sa_client,
@@ -460,49 +468,46 @@ void child_alone(int csd, struct sockaddr_in *sa_server,
 #else
     if (sigsetjmp(jmpbuffer,1) != 0) {
 #endif /* NO_SIGLONGJMP */
-	/* WaitForRequests returns 0 if timeout */
+	/* wait_keepalive returns 0 if timeout */
 	/*    CompleteRequest doesn't return */
-	fflush(gCurrentRequest->out);
+	rflush(gCurrentRequest);
 	kill_indexing(FI_LOCAL);
 	if ((keep_alive.nMaxRequests 
 	     && (++keep_alive.nCurrRequests >= keep_alive.nMaxRequests)) ||
-	    !WaitForRequest(csd, &keep_alive)) {
+	    !wait_keepalive(csd, &keep_alive)) {
 	    CompleteRequest(gCurrentRequest,-1);
-	    reqInfo = NULL;
 	}
     }
 
     while (1) {
 	reqInfo = initialize_request(reqInfo);
         reqInfo->connection_socket = 0;
+	reqInfo->in = 0;
         reqInfo->out = stdout;
-	get_request(reqInfo);
-	fflush(reqInfo->out);
+	RequestMain(reqInfo);
+	rflush(reqInfo);
 	kill_indexing(FI_LOCAL);
 
 	if (!keep_alive.bKeepAlive) {
 	    CompleteRequest(reqInfo,-1);
-	    reqInfo = NULL;
 	} else if ((keep_alive.nMaxRequests 
 		  && (++keep_alive.nCurrRequests >= keep_alive.nMaxRequests)) 
-		 || !WaitForRequest(csd, &keep_alive)) {
+		 || !wait_keepalive(csd, &keep_alive)) {
 	    CompleteRequest(reqInfo,-1);
-	    reqInfo = NULL;
 	}
     }
 }
 
-#ifndef NO_PASS
 /* to keep from being clobbered by setjmp */
 static int x;
 static int val;  /* indicates if keep_alive should remain active */
-static int nFirst = 0;
 #ifdef FD_LINUX
 static int switch_uid = 0;
 #endif /* FD_LINUX */
 
 void child_main(int parent_pipe, SERVER_SOCK_ADDR *sa_server)
 {
+    static per_request *reqInfo = NULL;
     close(mainSocket);
    
 #ifdef PROFILE
@@ -510,7 +515,8 @@ void child_main(int parent_pipe, SERVER_SOCK_ADDR *sa_server)
 #endif /* PROFILE */
 
 #ifdef QUANTIFY
-    quantify_clear_data();
+/*    quantify_clear_data(); */
+	quantify_start_recording_data();
 #endif /* QUANTIFY */
 
     /* Only try to switch if we're running as root */
@@ -547,12 +553,14 @@ void child_main(int parent_pipe, SERVER_SOCK_ADDR *sa_server)
 	standalone = 1;
     } 
 
+#ifndef THREADED
     for(x=0;x<num_children;x++) {
 	if (parent_pipe != Children[x].parentfd) close(Children[x].parentfd);
 	if (parent_pipe != Children[x].childfd) close(Children[x].childfd);
     }
     
     free(Children);
+#endif /* THREADED */
 
 #ifdef NO_SIGLONGJMP
     if ((val = setjmp(jmpbuffer)) != 0) {
@@ -560,60 +568,58 @@ void child_main(int parent_pipe, SERVER_SOCK_ADDR *sa_server)
     if ((val = sigsetjmp(jmpbuffer,1)) != 0) {
 #endif /* NO_SIGLONGJMP */
         reqInfo = gCurrentRequest;
-	fflush(reqInfo->out);
+	rflush(reqInfo);
 	kill_indexing(FI_LOCAL);
 	if (val == DIE_KEEPALIVE) {
 	    /* returns 0 if timeout during multiple request session */
 	    if ((keep_alive.nMaxRequests 
 		 && (++keep_alive.nCurrRequests >= keep_alive.nMaxRequests)) 
-		|| !WaitForRequest(csd, &keep_alive)) {
+		|| !wait_keepalive(csd, &keep_alive)) {
 		keep_alive.bKeepAlive = 0;    
 		CompleteRequest(reqInfo,parent_pipe);
-		reqInfo = NULL;
 	    }
 	}
 	else { /* in case it was in effect. probably a better place to reset */
 	    keep_alive.bKeepAlive = 0;    
 	    CompleteRequest(reqInfo,parent_pipe);
-	    reqInfo = NULL;
 	}
     }
 
     while (1) {
 	alarm (0);
-	if (!nFirst || !keep_alive.bKeepAlive) {
+	if (!keep_alive.bKeepAlive) {
 	    GetDescriptor (parent_pipe);
 	    remote_logname = GetRemoteLogName(sa_server);
-	    nFirst = 1;
 	    keep_alive.nCurrRequests = 0;
+	    if (reqInfo != NULL) reqInfo->RequestFlags = 0;
 	}
 
 	reqInfo = initialize_request(reqInfo);
 	reqInfo->connection_socket = 0;
+	reqInfo->in = 0;
 	reqInfo->out = stdout;
-	get_request(reqInfo);
-	fflush(reqInfo->out);
+	RequestMain(reqInfo);
+	rflush(reqInfo);
 	kill_indexing(FI_LOCAL);
 
 	if (!keep_alive.bKeepAlive) {
 	    CompleteRequest(reqInfo,parent_pipe);
-	    reqInfo = NULL;
-	    nFirst = 0;
 	} else if ((keep_alive.nMaxRequests 
 		  && (++keep_alive.nCurrRequests >= keep_alive.nMaxRequests)) 
-		 || !WaitForRequest(csd, &keep_alive)) {
+		 || !wait_keepalive(csd, &keep_alive)) {
 	    keep_alive.bKeepAlive = 0;
-	    nFirst = 0;
 	    CompleteRequest(reqInfo,parent_pipe);
-	    reqInfo = NULL;
 	}
     }    
 }
 
-void GetDescriptor (int parent_pipe)
+#ifndef NO_PASS
+void GetDescriptor(int parent_pipe)
 {
+#ifndef THREADED
     dup2(parent_pipe,0);
     dup2(parent_pipe,1);
+#endif /* THREADED */
 #ifdef SETPROCTITLE
     setproctitle("idle"); 
 #endif /* SETPROCTITLE */
@@ -647,11 +653,15 @@ void GetDescriptor (int parent_pipe)
 	close(parent_pipe);
 	exit(1);
     }
+#ifndef THREADED
     close(0);
     close(1);	
     dup2(csd,0);
     dup2(csd,1);
+#endif /* THREADED */
+
 }
+#endif /* NO_PASS */
 
 char* GetRemoteLogName (SERVER_SOCK_ADDR *sa_server)
 {
@@ -668,15 +678,17 @@ char* GetRemoteLogName (SERVER_SOCK_ADDR *sa_server)
       return NULL;
 }
 
+#ifndef NO_PASS
 int make_child(int argc, char **argv, int childnum,
 		SERVER_SOCK_ADDR *sa_server)
 {
     int fd[2];
     int pid;
+#ifdef SETPROCTITLE
     char namestr[30];
+#endif /* SETPROCTITLE */
 
     pid = 1;
-    servernum = childnum;
 #ifndef NEED_SPIPE
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fd) == -1) {
 #else
@@ -698,20 +710,22 @@ int make_child(int argc, char **argv, int childnum,
 	}
     
 	if (!pid) {
-	    close(Children[childnum].childfd);
+	 /* Child */
+            
+	    close(Children[childnum].childfd); 
 #ifdef BSD
 	    signal(SIGCHLD,(void (*)())ign);
 #else
 	    signal(SIGCHLD,SIG_IGN);
 #endif /* BSD */
-	    sprintf(namestr,"child %d",childnum);
 #ifdef SETPROCTITLE
-/*	    inststr(argv,argc,namestr); */
+	    sprintf(namestr,"child %d",childnum);
  	    setproctitle(namestr); 
 #endif /* SETPROCTITLE */
 	    Child = 1;
 	    child_main(Children[childnum].parentfd, sa_server);
 	} else {
+	  /* Parent */
 	    close(Children[childnum].parentfd);
 	}
     }
@@ -727,14 +741,14 @@ void initialize_socket(SERVER_SOCK_ADDR *sa_server,
   int keepalive_value = 1;  
 
   if ((mainSocket = socket(AF_INET,SOCK_STREAM,IPPROTO_TCP)) == -1) {
-    fprintf(stderr,"httpd: could not get socket\n");
+    fprintf(stderr,"HTTPd: could not get socket\n");
     perror("socket");
     exit(1);
   }
 
   if((setsockopt(mainSocket,SOL_SOCKET,SO_REUSEADDR,(char *)&one,
 		 sizeof(one))) == -1) {
-    fprintf(stderr,"httpd: could not set socket option SO_REUSEADDR\n");
+    fprintf(stderr,"HTTPd: could not set socket option SO_REUSEADDR\n");
     perror("setsockopt");
     exit(1);
   }
@@ -746,12 +760,12 @@ void initialize_socket(SERVER_SOCK_ADDR *sa_server,
 
   if((setsockopt(mainSocket,SOL_SOCKET,SO_KEEPALIVE,(void *)&keepalive_value,
 		 sizeof(keepalive_value))) == -1) {
-    fprintf(stderr,"httpd: could not set socket option SO_KEEPALIVE\n"); 
+    fprintf(stderr,"HTTPd: could not set socket option SO_KEEPALIVE\n"); 
     perror("setsockopt"); 
     exit(1); 
   }
   
-  bzero((char *) sa_server, sizeof(*sa_server));
+  memset((char *)sa_server, 0, sizeof(*sa_server));
   sa_server->sin_family=AF_INET;
   sa_server->sin_addr= gConfiguration->address_info; 
   /*    sa_server.sin_addr.s_addr=htonl(INADDR_ANY); */
@@ -761,7 +775,7 @@ void initialize_socket(SERVER_SOCK_ADDR *sa_server,
       fprintf(stderr,"HTTPd: cound not bind to address %s port %d\n",
 	      inet_ntoa(gConfiguration->address_info),port);
     else
-      fprintf(stderr,"httpd: could not bind to port %d\n",port);
+      fprintf(stderr,"HTTPd: could not bind to port %d\n",port);
     perror("bind");
     exit(1);
   }
@@ -781,12 +795,13 @@ void standalone_main(int argc, char **argv)
     static SERVER_SOCK_ADDR sa_server;
     static CLIENT_SOCK_ADDR sa_client;
     static int    one = 1;
+    static int pid = 0;
 #ifdef TACHOMETER
     static int Requests[MAX_TACHOMETER];
     static time_t Request_time = 0L;
     static int i;
     static char Request_title[64];
-#endif
+#endif /* TACHOMETER */
 
 
 
@@ -794,9 +809,8 @@ void standalone_main(int argc, char **argv)
       process to ensure proper time zone settings */
     tzset();
 
-#if !defined(PROFILE) && !defined(QUANTIFY)
-    detach();   
-#endif /* PROFILE */
+    if (debug_mode == FALSE) 
+      detach();    
 
     sprintf(error_msg,"HTTPd: Starting as %s",argv[0]);
     x = 1;
@@ -816,6 +830,7 @@ void standalone_main(int argc, char **argv)
 #endif /* SETPROCTITLE */
 
     while(!Exit) {
+/*      current_process_size("Starting"); */
       initialize_socket(&sa_server,&sa_client);
       set_signals();
       speed_hack_libs();
@@ -823,9 +838,11 @@ void standalone_main(int argc, char **argv)
 
 #ifndef NO_PASS
       num_children = 0;
-      Children = (ChildInfo *) malloc(sizeof(ChildInfo)*(max_servers+1));
-      while (num_children < start_servers) {
-	make_child(argc, argv, num_children++, &sa_server);
+      if (debug_mode == FALSE) {
+        Children = (ChildInfo *) malloc(sizeof(ChildInfo)*(max_servers+1));
+        while (num_children < start_servers) {
+	  make_child(argc, argv, num_children++, &sa_server);
+	}
       }
 #endif /* NO_PASS */
 
@@ -935,10 +952,13 @@ void standalone_main(int argc, char **argv)
 		    } /* if (make_child) else ... */
 		  } else { 
 		    /* Already have as many children as compiled for.*/
-		    if (!fork()) {
-		      /* inststr(argv, argc, "httpd-alone"); */
+		    if (debug_mode == FALSE) 
+		      pid = fork();
+		     else 
+		      Exit = TRUE;
+		    if (!pid) {
 		      child_alone(csd,&sa_server,&sa_client);
-		    } /* fork */
+		    } 
 		  } /* if (num_children < max_servers) ... else ... */
 		} else {
 		  Children[free_child].busy = 1;
@@ -952,8 +972,11 @@ void standalone_main(int argc, char **argv)
 	      } else 
 #endif /* NO_PASS */
 		{
-		  if (!fork()) {
-		    /*  inststr(argv, argc, "httpd-alone"); */
+		  if (debug_mode == FALSE) 
+		    pid = fork();
+		   else
+		    Exit = TRUE;
+		  if (!pid) {
 		    child_alone(csd,&sa_server,&sa_client);
 		  } /* fork */
 		  close(csd);
@@ -979,7 +1002,7 @@ void standalone_main(int argc, char **argv)
                         avg1, avg5/5, avg30/30);
                 setproctitle(Request_title); 
               }
-#endif
+#endif /* TACHOMETER */
 	    } /* If good accept */
 	  } /* if mainSocket ready for read */
 	} /* if select */
@@ -1005,6 +1028,7 @@ void standalone_main(int argc, char **argv)
         free(Children);
 #endif /* NO_PASS */        
         free_host_conf();
+	freeAllStrings(STR_HUP);
 	read_config(error_log);
 	set_group_privs();
 	log_error("HTTPd: successful restart",error_log);
@@ -1015,10 +1039,30 @@ void standalone_main(int argc, char **argv)
     } /* while (!Exit) */
 } /* standalone_main */
 
+void default_banner(FILE* fout)
+{
+  fprintf(fout,"NCSA HTTPd %s\n",SERVER_SOURCE);
+  fprintf(fout,"Licensed material.  Portions of this work are\n");
+  fprintf(fout,"Copyright (C) 1995-1996 Board of Trustees of the University of Illinois\n");
+  fprintf(fout,"Copyright (C) 1995-1996 The Apache Group\n");
+#if defined(DIGEST_AUTH)
+  fprintf(fout,"Copyright (C) 1989-1993 RSA Data Security, Inc.\n");
+#endif /* DIGEST_AUTH */
+#ifdef DIGEST_AUTH
+  fprintf(fout,"Copyright (C) 1993-1994 Carnegie Mellon University\n");
+  fprintf(fout,"Copyright (C) 1991      Bell Communications Research, Inc. (Bellcore)\n");
+  fprintf(fout,"Copyright (C) 1994      Spyglass, Inc.\n");
+#endif /* DIGEST_AUTH */
+#ifdef FCGI_SUPPORT
+  fprintf(fout,"Copyright (C) 1995      Open Market, Inc.\n");
+#endif /* FCGI_SUPPORT */
+  fflush(fout);
+}
+
 void usage(char *bin) 
 {
-  fprintf(stderr,"NCSA HTTPd %s\n",SERVER_SOURCE);
-  fprintf(stderr,"Documentation online at http://hoohoo.ncsa.uiuc.edu/\n\n");
+  default_banner(stderr);
+  fprintf(stderr,"\nDocumentation online at http://hoohoo.ncsa.uiuc.edu/\n\n");
   
   fprintf(stderr,"Compiled in Options:\n");
 #ifdef SETPROCTITLE
@@ -1036,29 +1080,42 @@ void usage(char *bin)
 #ifdef NO_PASS
   fprintf(stderr,"\tNO_PASS\n");
 #endif /* NO_PASS */
+#ifdef FCGI_SUPPORT
+  fprintf(stderr,"\tFCGI_SUPPORT\n");
+#endif /* FCGI_SUPPORT */
 #ifdef DBM_SUPPORT
   fprintf(stderr,"\tDBM_SUPPORT\n");
 #endif /* DBM_SUPPORT */
+#ifdef NIS_SUPPORT
+  fprintf(stderr,"\tNIS_SUPPORT\n");
+#endif /* NIS_SUPPORT */
 #ifdef DIGEST_AUTH
   fprintf(stderr,"\tDIGEST_AUTH\n");
 #endif /* DIGEST_AUTH */
+#ifdef CONTENT_MD5
+  fprintf(stderr,"\tCONTENT_MD5\n");
+#endif /* CONTENT_MD5 */
 #ifdef KRB4
   fprintf(stderr,"\tKRB4\n");
 #endif /* KRB4 */
 #ifdef KRB5
   fprintf(stderr,"\tKRB5\n");
 #endif /* KRB5 */
+#ifdef PEM_AUTH
+  fprintf(stderr,"\tPEM_AUTH\n");
+#endif /* PEM_AUTH */
   fprintf(stderr,"\tHTTPD_ROOT = %s\n",HTTPD_ROOT);
   fprintf(stderr,"\tDOCUMENT_ROOT = %s\n", DOCUMENT_LOCATION);
 
   fprintf(stderr,"\n");
 #ifdef HAVE_KERBEROS
-  fprintf(stderr,"Usage: %s [-d directory] [-f file] [-k file] [-K file] [-v]\n",bin);
+  fprintf(stderr,"Usage: %s [-d directory] [-f file] [-k file] [-K file] [-vX]\n",bin);
 #else
-  fprintf(stderr,"Usage: %s [-d directory] [-f file] [-v]\n",bin);
+  fprintf(stderr,"Usage: %s [-d directory] [-f file] [-vX]\n",bin);
 #endif /* HAVE_KERBEROS */
   fprintf(stderr,"-d directory\t : specify an alternate initial ServerRoot\n");
   fprintf(stderr,"-f file\t\t : specify an alternate ServerConfigFile\n");
+  fprintf(stderr,"-X\t\t : Answer one request for debugging, don't fork\n");
   fprintf(stderr,"-v\t\t : version information (this screen)\n");
 #ifdef KRB4
   fprintf(stderr,"-k file\t\t : specify an alternate Kerberos V4 svrtab file\n");
@@ -1076,6 +1133,7 @@ int main (int argc, char **argv, char **envp)
 {
     int c;
 
+/* FIRST */
 #ifdef RLIMIT_NOFILE
     /* If defined (not user defined, but in sys/resource.h), this will attempt
      * to set the max file descriptors per process as high as allowed under
@@ -1102,16 +1160,20 @@ int main (int argc, char **argv, char **envp)
     moncontrol(0);
 #endif /* PROFILE */
 
-
+    /* First things first */
     strcpy(server_root,HTTPD_ROOT);
     make_full_path(server_root,SERVER_CONFIG_FILE,server_confname);
 
 #ifdef HAVE_KERBEROS
-    while((c = getopt(argc,argv,"d:f:vk:K:")) != -1) {
+    while((c = getopt(argc,argv,"d:f:vk:K:Xs")) != -1) {
 #else
-    while((c = getopt(argc,argv,"d:f:v")) != -1) {
+    while((c = getopt(argc,argv,"d:f:vXs")) != -1) {
 #endif /* HAVE_KERBEROS */
         switch(c) {
+	  case 'X':
+	    debug_mode = TRUE;
+	    printf("Debug On\n");
+	    break;
           case 'd':
             strcpy(server_root,optarg);
 	    make_full_path(server_root,SERVER_CONFIG_FILE,server_confname);
@@ -1146,20 +1208,30 @@ int main (int argc, char **argv, char **envp)
 	    break;
 #endif /* KRB5 */
 #endif  /* HAVE_KERBEROS */
-
           case '?':
             usage(argv[0]);
         }
     }
 
+
+/* Global Initialization:
+ * Currently for File Descriptor Table and allocater
+ */
     InitFdTable();
+    initialize_allocate();
+
     read_config(stderr);
+/* Passed arguments stage, dump baloney */
+#ifndef SUPPRESS_BANNER
+    if (standalone) default_banner(stdout);
+#endif /* SUPPRESS_BANNER */
 #ifdef SETPROCTITLE
     initproctitle(process_name, argc, argv, envp); 
 #endif /* SETPROCTITLE */
+
     set_group_privs();
     get_local_host();
-    
+
 #ifdef __QNX__
     dup2(0,1);
     dup2(0,2);
@@ -1174,14 +1246,15 @@ int main (int argc, char **argv, char **envp)
         group_id = getgid();
 	
 	reqInfo->connection_socket = 0;
+	reqInfo->in = 0;
 	reqInfo->out = stdout;
         port = get_portnum(reqInfo,fileno(reqInfo->out));
 
         if(do_rfc931)
             remote_logname = get_remote_logname(reqInfo->out);
 
-        get_request(reqInfo);
-	fflush(reqInfo->out);
+        RequestMain(reqInfo);
+	rflush(reqInfo);
     }
 
     close_all_logs();

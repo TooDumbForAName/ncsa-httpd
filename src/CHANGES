@@ -1,0 +1,16 @@
+
+Fixes for 1.5.2
+------------------
+*) Changed getline rfc822 line wrap to check for validity of the next bits
+   before attempting to see them
+*) Changed imagemap.c so relative URLs actually work
+*) Don't core dump on a method only request
+*) reset errno to 0 in send_fp so we break out of loop
+*) somewhere we stopped killing cgi scripts on SIGALRM and SIGPIPE
+*) changed group handling support to support multiple groups again
+*) reset content_length before scanning cgi headers, not after
+*) don't free env var in replace (it uses allocate now)
+*) Only look for path_info if its part of the requested URL (as opposed
+   to keep looking until you hit a real directory)
+*) Make make_dirstr() in util.c return / instead of null if n = 1
+

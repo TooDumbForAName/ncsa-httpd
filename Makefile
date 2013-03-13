@@ -5,7 +5,7 @@ all:
 	@echo Please choose a system type.
 	@echo Valid types are aix3, aix4, sunos, sgi4, sgi5,  
 	@echo hp-cc, hp-gcc, solaris, netbsd, svr4, linux, 
-	@echo next, ultrix, osf1, aux, bsdi
+	@echo next, ultrix, osf1, aux, bsdi, sco5
 	@echo If you do not have one of these systems, you must edit
 	@echo src/Makefile, src/portability.h, src/config.h,
 	@echo cgi-src/Makefile, and support/Makefile
@@ -45,6 +45,8 @@ next:
 
 osf1:
 	cd src ; make osf1; cd ../cgi-src ; make osf1; cd ../support ; make osf1 
+sco5:
+	cd src ; make sco5; cd ../cgi-src ; make CC=icc ; cd ../support ; make sco5
 
 sgi4:
 	cd src ; make sgi; cd ../cgi-src ; make sgi ; cd ../support ; make sgi4

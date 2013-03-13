@@ -12,8 +12,6 @@
  *
  * http_auth: authentication
  *
- * Based on NCSA HTTPd 1.3 by Rob McCool
- * 
  */
 
 
@@ -35,17 +33,17 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <ctype.h>
+#include <sys/types.h>
+#include <termios.h>
 #ifdef DBM_SUPPORT
 # ifndef _DBMSUPPORT_H  /* moronic OSs which don't protect their own include */
 #  define _DBMSUPPORT_H  /* files from being multiply included */
 #  include <ndbm.h>
 # endif /* _DBMSUPPORT_H */
 #endif /* DBM_SUPPORT */
-
 #ifdef NIS_SUPPORT
-#include <rpcsvc/ypclnt.h>
+# include <rpcsvc/ypclnt.h>
 #endif /* NIS_SUPPORT */
-
 #if defined(KRB4) || defined(KRB5)
 # define HAVE_KERBEROS
 #endif /* defined(KRB4) || defined(KRB5) */
@@ -55,21 +53,17 @@
 #ifdef KRB5
 # include <krb5.h>
 #endif /* KRB5 */
-
 #include "constants.h"
 #include "fdwrap.h"
+#include "allocate.h"
 #include "http_auth.h" 
 #include "http_access.h" 
 #include "http_mime.h"
 #include "http_config.h" 
 #include "http_log.h"
+#include "http_request.h"
 #include "util.h"
 #include "digest.h"
-
-
-char user[MAX_STRING_LEN]; 
-char groupname[MAX_STRING_LEN];
-
 
 #ifdef HAVE_KERBEROS
 #define T 1
@@ -77,7 +71,7 @@ char groupname[MAX_STRING_LEN];
 char* index();
 char krb_authreply[2048];
 extern char *remote_logname; 
-extern char out_auth_header[];
+/* extern char out_auth_header[]; */
 
 /* Table for converting binary values to and from hexadecimal */
 static char hex[] = "0123456789abcdef";
@@ -107,6 +101,12 @@ AUTH_DAT kerb_kdata;
 #endif /* MAX_KDATA_LEN */
 char k5_srvtab[MAX_STRING_LEN] = "";
 #endif /* KRB5 */
+
+#ifdef RADIUS_AUTH
+/* Experimental RADIUS authentication 
+ */
+int testpass (char * user, char * clear_pw, char * servername);
+#endif /* RADIUS_AUTH */
 
 #ifdef NIS_SUPPORT
 int
@@ -220,117 +220,220 @@ int get_pw(per_request *reqInfo, char *user, char *pw, security_data* sec)
     return 0; 
 }
 
-int in_group(per_request *reqInfo, char *user, 
-	     char *group, char* pchGrps
-#ifdef DBM_SUPPORT
-	     , DBM* db 
-#endif /* DBM_SUPPORT */
-) {
-    char *mems = NULL, *endp = NULL;
-    char *pch;
-    char chSaved = '\0';
-    int  nlen, bFound = 0;
-    char l[MAX_STRING_LEN];
-    int x,start;
-
-    if (reqInfo->auth_grpfile_type == AUTHFILETYPE_STANDARD) {
-	nlen = strlen (group);
-	if ((mems = strstr (pchGrps, group)) && *(mems + nlen) == ':') {
-	    if ((endp = strchr (mems + nlen + 1, ':'))) {
-		while (!isspace(*endp)) endp--;
-		chSaved = *endp;
-		*endp = '\0';
-	    }
-/* BUG FIX: Couldn't have the same name as the group as a user because
- * failed to move the string beyond the group:
+/* in_list()
+ *   Search a comma or space delimited list for a user
+ *   return 0 if not found, 1 if found
  */
-            mems = mems + nlen;
-	}
-	else
-	    return 0;
+int in_list(char *user, char *list)
+{
+   int x = 0;
+   int start = 0;
+   int Found = 0;
+ 
+    while(isspace(list[x]) || (list[x] == ','))
+      x++;
+    start = x;
+    while (!Found && (list[x] != '\0')) {
+      if ((isspace(list[x]) || (list[x] == ','))) {
+        Found = !strncmp(user,(list+start),x-start);
+        start = x+1;
+      }
+      x++;
     }
-#ifdef DBM_SUPPORT
-    else if (reqInfo->auth_grpfile_type == AUTHFILETYPE_DBM) {
-	datum dtKey, dtRec;
+    if (!Found && list[x] == '\0' && (x-start > 0)) {
+      Found = !strncmp(user,(list+start),x-start);
+    }
+ 
+   return Found;
+}
 
-	dtKey.dptr = group;
- 	dtKey.dsize = strlen(group);
- 	dtRec = dbm_fetch(db, dtKey);
- 	if (dtRec.dptr) {
-           strncpy(l, dtRec.dptr, dtRec.dsize);
-           l[dtRec.dsize] = '\0';
-           mems = l;
-	}
- 	else
-	    return 0;
+/* in_listn()
+ *   Search a comma or space delimited list for a user
+ *   Group list doesn't need to be NULL terminated (for DBM format)
+ *   return 0 if not found, 1 if found
+ */
+int in_listn(char *user, char *list, int len)
+{
+   int x = 0;
+   int start = 0;
+   int Found = 0;
+ 
+    while(isspace(list[x]) || (list[x] == ','))
+      x++;
+    start = x;
+    while (!Found && (list[x] != '\0') && (x < len)) {
+      if ((isspace(list[x]) || (list[x] == ','))) {
+        Found = !strncmp(user,(list+start),x-start);
+        start = x+1;
+      }
+      x++;
     }
-#endif /* DBM_SUPPORT */
+    if (!Found && ((list[x] == '\0') || (x == len)) && (x-start > 0)) {
+      Found = !strncmp(user,(list+start),x-start);
+    }
+ 
+   return Found;
+}
+
+/* nis_group_lookup()
+ *   Validate a user in an NIS group.  Retrieves the group from an NIS database.
+ *   (Default group file is webgroup)
+ *   return 0 on failure, 1 on success 
+ */
 #ifdef NIS_SUPPORT
-    else if (reqInfo->auth_pwfile_type == AUTHFILETYPE_NIS) {
+int nis_group_lookup(per_request *reqInfo, char *user, char *group)
+{
       char    *domain,
               *grfile,
               *resptr,
               w[MAX_STRING_LEN];
       int     yperr,
               resize;
-
-      if (init_nis(&domain) != 0)
-              return 0;
-
+ 
+      if (init_nis(&domain) != 0) {
+        log_error("HTTPd/NIS: init_nis() failed",reqInfo->hostInfo->error_log); 
+        return 0;
+      }
+ 
       if (strcmp(reqInfo->auth_grpfile, "+"))
               grfile = reqInfo->auth_grpfile;
       else
               grfile = "webgroup";
-
+ 
       yperr = yp_match(domain, grfile, group, strlen(group), &resptr, &resize);
-      if (yperr != 0)
-              return 0;
-
+      if (yperr != 0) {
+	sprintf(w,"HTTPd/NIS: yp_match() failed, yperr = %d\n",yperr);
+	log_error(w,reqInfo->hostInfo->error_log);
+        return 0;
+      }
+ 
       getword(w, resptr, ':');
       if (strcmp(w, group) != 0)
               return 0;
-
-      while (*resptr && isspace(*resptr))
-              resptr++;
-      (void) strcpy(l, resptr);
-      mems = l;
-    } 
-#endif /* NIS_SUPPORT */
-    else {
-      die(reqInfo,SC_SERVER_ERROR,"Invalid group file type");
-      return 0;
-    }
-
-/* Actually search the group line for the user.  Can be comma or space
- * delimited
- */
-    x = 0;
-    start = 0;
-    pch = mems;
-    while (!bFound && (pch[x] != '\0')) {
-      if ((isspace(pch[x])) || (pch[x] == ',')) {
-        bFound = !strncmp(user,(pch+start),x-start);
-        start = x+1;
-      }
-      x++;
-    }
-    if (!bFound && pch[x] == '\0' && (x-start > 0)) {
-      bFound = !strncmp(user,(pch+start),x-start);
-    }
  
+      return in_list(user,resptr);
+}
+#endif /* NIS_SUPPORT */
 
-/* Buggy, and obfuscated.  */
-/*    nlen = strlen (user);
-    nlen = strlen (user);
-    pch = mems;
-    while (!bFound && (pch = strstr(pch, user)) && 
-       (!*(pch + nlen) || isspace (*(pch + nlen)) || *(pch + nlen) == ','))
-       bFound = 1; 
-*/
-    if (endp && *endp == '\0') *endp = chSaved;
-    return bFound;
+/* dbm_group_lookup()
+ * Implicitly requires group line not to exceed HUGE_STRING_LEN because
+ * groups aren't stored with trailing 0.
+ * Searches open DBM database (db) for keypair with the group name as key
+ * and returns 0 if user or group not found, 1 if user is in group
+ */
+#ifdef DBM_SUPPORT
+int dbm_group_lookup(per_request *reqInfo, char *user, char *group, DBM *db)
+{
+  datum dtKey, dtRec;
+  int Found = 0;
+
+  dtKey.dptr = group;
+  dtKey.dsize = strlen(group);
+  dtRec = dbm_fetch(db, dtKey);
+  if (dtRec.dptr) {
+    Found = in_listn(user,dtRec.dptr,dtRec.dsize);
+  } 
+  return Found;
+}
+#endif /* DBM_SUPPORT */
+
+int mind(char *S, char *possible)
+{
+  int x,y;
+  for (x = 0; S[x]; x++)
+    for (y = 0; possible[y]; y++)
+      if (S[x] == possible[y]) return x;
+  return -1;
 }
 
+int eoln(char *S)
+{
+  int x;
+  for (x = 0; S[x]; x++)
+    if (S[x] == '\n') return x;
+  return x;
+}
+
+int in_group(per_request *reqInfo, char *user, 
+	     char *group, char* gfile_mem 
+#ifdef DBM_SUPPORT
+	     , DBM* db 
+#endif /* DBM_SUPPORT */
+) 
+{
+  int  bFound = FALSE;
+  int Done = FALSE;
+
+  if (reqInfo->auth_grpfile_type == AUTHFILETYPE_STANDARD) {
+/*
+    char *cur_group = NULL;
+    char *cur_list = NULL;
+    cur_group = strtok(gfile_mem,":");
+    while (!Done && !bFound) {
+      cur_list = strtok(NULL,"\n");
+      if (!strcmp(group,cur_group)) {
+	bFound = in_list(user,cur_list);
+      }
+      cur_group = strtok(NULL,":");
+      if (cur_group == NULL) Done = TRUE;
+    }
+*/
+    int beg_line = 0;
+    int end_line = 0;
+    int end_grp = 0;
+    int len = strlen(group);
+    while (!Done && !bFound) {
+      end_grp = ind(&gfile_mem[beg_line],':');
+      if (end_grp != -1) {
+        end_line = ind(&gfile_mem[beg_line],'\n');
+        if (end_line < 0) {
+          end_line = strlen(&gfile_mem[beg_line]);
+          Done = TRUE;
+        }
+        if (end_line > end_grp) {
+          if ((end_grp == len) &&
+              (!strncmp(&gfile_mem[beg_line],group,len)))
+          {
+            bFound = in_listn(user,&gfile_mem[beg_line+end_grp+1],end_line - end_grp);
+          }
+        } else {
+         /* hmm, how to handle the backward compat with the bug in 1.5 which
+          * allowed a group to span multiple lines
+          */
+        }
+        beg_line += end_line+1;
+      } else Done = TRUE;
+    }
+  }
+#ifdef DBM_SUPPORT
+  else if (reqInfo->auth_grpfile_type == AUTHFILETYPE_DBM) {
+    bFound = dbm_group_lookup(reqInfo,user,group,db);
+  }
+#endif /* DBM_SUPPORT */
+#ifdef NIS_SUPPORT
+  else if (reqInfo->auth_grpfile_type == AUTHFILETYPE_NIS) {
+    bFound = nis_group_lookup(reqInfo,user,group);
+  } 
+#endif /* NIS_SUPPORT */
+  else {
+    die(reqInfo,SC_SERVER_ERROR,"Invalid group file type");
+    return 0;
+  }
+    
+  return bFound;
+}
+
+#ifdef DEBUG
+int fputsn(FILE *fp,char *S,int num) {
+  int x;
+  for(x = 0 ; x < num ; x++) 
+    fprintf(fp,"%c",S[x]);
+}
+#endif /* DEBUG */
+
+/* init_group(): loads an entire group file into memory for parsing.
+ *   and returns a pointer to it.
+ */
 char* init_group(per_request *reqInfo,char* grpfile) 
 { 
     FILE *fp; 
@@ -422,54 +525,64 @@ void check_auth(per_request *reqInfo, security_data *sec, char* auth_line)
     KerberosInfo kdat;
 #endif /* HAVE_KERBEROS */
 
+    /* Default to Auth Type Basic */
+
     if(!sec->auth_type[0])
 	strcpy(sec->auth_type, "Basic");
     
+
+    /* No authorization info, so return the 401 to retrieve it */
     if(!auth_line[0])
-	auth_bong(reqInfo,NULL, reqInfo->auth_name, sec->auth_type);
+	   auth_bong(reqInfo,NULL, reqInfo->auth_name, sec->auth_type);
 
     for (x=0 ; auth_line[x] && (auth_line[x] != ' ') && x < MAX_STRING_LEN; x++)
 	auth_type[x] = auth_line[x];
     auth_type[x++] = '\0';
 
+
+    /* The authorization in the auth line is not the same which protects this
+     * directory.
+     */
     if (strcmp(auth_type, sec->auth_type))
 	auth_bong(reqInfo,"type mismatch",reqInfo->auth_name,sec->auth_type);
 
+/* Basic Authentication */
     if(!strcasecmp(sec->auth_type,"Basic")) {
         if(!reqInfo->auth_name) {
-            sprintf(errstr,"httpd: need AuthName for %s",sec->d);
+            sprintf(errstr,"HTTPd: need AuthName for %s",sec->d);
             die(reqInfo,SC_SERVER_ERROR,errstr);
         }
         if(!reqInfo->auth_pwfile) {
-            sprintf(errstr,"httpd: need AuthUserFile for %s",sec->d);
+            sprintf(errstr,"HTTPd: need AuthUserFile for %s",sec->d);
             die(reqInfo,SC_SERVER_ERROR,errstr);
         }
 
         uudecode(auth_line + strlen(auth_type),(unsigned char *)ad,MAX_STRING_LEN);
-        getword(user,ad,':');
+        getword(reqInfo->auth_user,ad,':');
         strcpy(sent_pw,ad);
-        if(!get_pw(reqInfo,user,real_pw,sec)) {
-            sprintf(errstr,"user %s not found",user);
+        if(!get_pw(reqInfo,reqInfo->auth_user,real_pw,sec)) {
+            sprintf(errstr,"user %s not found",reqInfo->auth_user);
             auth_bong(reqInfo,errstr,reqInfo->auth_name,sec->auth_type);
         }
         /* anyone know where the prototype for crypt is? */
 	/* Yeah, in unistd.h on most systems, it seems */
         if(strcmp(real_pw,(char *)crypt(sent_pw,real_pw))) {
-            sprintf(errstr,"user %s: password mismatch",user);
+            sprintf(errstr,"user %s: password mismatch",reqInfo->auth_user);
             auth_bong(reqInfo,errstr,reqInfo->auth_name,sec->auth_type);
         }
     }
+/* End Basic Authentication */
 #ifdef DIGEST_AUTH
     else if(!strcasecmp(sec->auth_type,"Digest")) {
         if(!reqInfo->auth_name) {
-            sprintf(errstr,"httpd: need AuthName for %s",sec->d);
+            sprintf(errstr,"HTTPd: need AuthName for %s",sec->d);
             die(reqInfo,SC_SERVER_ERROR,errstr);
         }
         if(!sec->auth_digestfile) {
-            sprintf(errstr,"httpd: need AuthDigestFile for %s",sec->d);
+            sprintf(errstr,"HTTPd: need AuthDigestFile for %s",sec->d);
             die(reqInfo,SC_SERVER_ERROR,errstr);
         }
-        Digest_Check(reqInfo,user, sec);
+        Digest_Check(reqInfo,reqInfo->auth_user, sec);
     }
 #endif /* DIGEST_AUTH */
 #ifdef HAVE_KERBEROS 
@@ -501,9 +614,8 @@ void check_auth(per_request *reqInfo, security_data *sec, char* auth_line)
     
 	if (krbresult) {
 	    if (check_krb_restrict(reqInfo, sec, &kdat)) {
-		remote_logname = user;
-		out_auth_header[0] = '\0'; 
-		sprintf(out_auth_header, "WWW-Authenticate: %s %s\r\n", 
+		remote_logname = reqInfo->auth_user;
+		sprintf(reqInfo->outh_www_auth,"%s %s", 
 			sec->auth_type, krb_authreply);
 		return;
 	    }
@@ -557,7 +669,7 @@ void check_auth(per_request *reqInfo, security_data *sec, char* auth_line)
                         t[y] = t[y+1];
                 }
                 getword(w,t,' ');
-                if(!strcmp(user,w)) {
+                if(!strcmp(reqInfo->auth_user,w)) {
 		    bValid = 1;
 		    break;
 		}
@@ -572,11 +684,11 @@ void check_auth(per_request *reqInfo, security_data *sec, char* auth_line)
             while (t[0]) {
                 getword(w,t,' ');
 #ifdef DBM_SUPPORT
-                if (in_group(reqInfo,user,w, pchGrpData, db)) {
+                if (in_group(reqInfo,reqInfo->auth_user,w, pchGrpData, db)) {
 #else
-		if (in_group(reqInfo,user,w, pchGrpData)) {
+		if (in_group(reqInfo,reqInfo->auth_user,w, pchGrpData)) {
 #endif /* DBM_SUPPORT */
-		    strcpy(groupname,w);
+		    strcpy(reqInfo->auth_group,w);
 		    bValid = 1;
 		    break;
 		}
@@ -597,11 +709,10 @@ void check_auth(per_request *reqInfo, security_data *sec, char* auth_line)
     }
     /* if we didn't validate the user */
     if (!bValid) {
-	sprintf(errstr,"user %s denied",user);
+	sprintf(errstr,"user %s denied",reqInfo->auth_user);
 	auth_bong(reqInfo,errstr,reqInfo->auth_name,sec->auth_type);
     }
 }
-
 
 #ifdef HAVE_KERBEROS
 
@@ -983,6 +1094,3 @@ int krb_in_group(KerberosInfo* kdat, char *group, char* pchGrps)
 }
 
 #endif   /* HAVE_KERBEROS */
-
-
-

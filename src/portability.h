@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * portability.h,v 1.29 1995/11/28 09:02:18 blong Exp
+ * portability.h,v 1.32 1996/03/27 20:44:29 blong Exp
  *
  ************************************************************************
  *
@@ -37,7 +37,6 @@ char *crypt(char *pw, char *salt);
 #define FD_BSD
 #define MIX_SOCKADDR
 #define bzero(a,b) memset(a,0,b)
-#define getwd(d) getcwd(d,MAX_STRING_LEN)
 #define JMP_BUF sigjmp_buf
 #define DIR_FILENO(p)  ((p)->dd_fd)
 #define NEED_CRYPT_H
@@ -58,7 +57,6 @@ char *crypt(char *pw, char *salt);
 #ifndef _HPUX_SOURCE
 # define _HPUX_SOURCE
 #endif /* _HPUX_SOURCE */
-#define getwd(d) getcwd(d,MAX_STRING_LEN)
 #define JMP_BUF sigjmp_buf
 #define DIR_FILENO(p)  ((p)->dd_fd)
 
@@ -71,6 +69,7 @@ char *crypt(char *pw, char *salt);
 #define JMP_BUF sigjmp_buf
 #define DIR_FILENO(p)  ((p)->dd_fd)
 #define HEAD_CRYPT
+#define MISSING_HEADERS
 
 #elif defined(AIX4)
 #undef BSD
@@ -198,28 +197,33 @@ typedef int pid_t;
 typedef int mode_t;
 #define JMP_BUF jmp_buf
 #define DIR_FILENO(p)  ((p)->dd_fd)
+/* The following might be required for some versions of NeXTStep on
+ * some platforms.
+ */
+/* #include <netinet/in_systm.h> */
 
 
 #elif defined(LINUX)
-/* This release contains a Linux file descriptor hack using the /proc filesystem.
-   This is a largely unsupported feature, and will hopefully be replaced by one
-   of the other file descriptor passing mechanisms when they are supported by
-   the Linux kernel */
-/* #define NO_PASS */
-#define FD_LINUX
+#if !defined(FD_LINUX) && !defined(NO_PASS)
+#define FD_BSD
+#define FD_BSDRENO
+#endif
 /* Needed for newer versions of libc (5.2.x) to use FD_LINUX hack */
 #define DIRENT_ILLEGAL_ACCESS
+#define DIR_FILENO(p)  ((p)->dd_fd)
+#define CMSG_DATA(cmptr)  ((cmptr)->cmsg_data)
+#define NEED_SYS_UN_H
 #undef BSD
 #undef NO_KILLPG
 #undef NO_SETSID
 #undef NEED_STRDUP
 #define MIX_SOCKADDR
 /* This are defined, in linux/time.h included from sys/time.h, as of 1.2.8 */
-#ifdef 0
+#ifdef NEVER_DEFINED
 # define FD_SET __FD_SET
 # define FD_ZERO __FD_ZERO
 # define FD_ISSET __FD_ISSET
-#endif /* 0 */
+#endif /* NEVER_DEFINED */
 #define JMP_BUF sigjmp_buf
 
 #elif defined(NETBSD) || defined(__NetBSD__)
@@ -252,7 +256,15 @@ typedef int mode_t;
 #undef NO_SETSID
 #define NEED_INITGROUPS
 #define CALL_TZSET
-#define getwd(d) getcwd(d,MAX_STRING_LEN)
+#define JMP_BUF sigjmp_buf
+#define MIX_SOCKADDR
+
+#elif defined(SCO5)
+#undef BSD
+#define FD_SYSV
+#undef NO_KILLPG
+#undef NO_SETSID
+#define CALL_TZSET
 #define JMP_BUF sigjmp_buf
 #define MIX_SOCKADDR
 
@@ -260,7 +272,6 @@ typedef int mode_t;
 #define BSD
 #define FD_BSD
 #define NEED_STRDUP
-#define getwd(d) getcwd(d,MAX_STRING_LEN)
 #define NEED_SYS_MALLOC_H
 #include <sys/types.h>
 #define JMP_BUF sigjmp_buf
@@ -294,7 +305,6 @@ typedef int mode_t;
 #define NEED_STRNCASECMP
 #define bzero(a,b) memset(a,0,b)
 #define JMP_BUF sigjmp_buf
-#define getwd(d) getcwd(d,MAX_STRING_LEN)
 #define S_ISLNK(m) (((m)&(S_IFMT)) == (S_IFLNK))
 
 #elif defined(__bsdi__)
@@ -350,7 +360,6 @@ typedef int mode_t;
 #endif
 #define lstat stat
 #define strftime(buf,bufsize,fmt,tm)    ascftime(buf,fmt,tm)
-#define getwd(d) getcwd(d,MAX_STRING_LEN)
 #define readlink(a,b,c) -1
 typedef int uid_t;
 typedef int gid_t;
@@ -412,6 +421,9 @@ extern char *getenv();
 # define DIR_TYPE direct
 #endif /* !defined(NeXT) && !defined(CONVEXOS) && !defined(APOLLO) */
 
+#if !defined(HAVE_STDARG) && !defined(HAVE_VARARGS)
+# define HAVE_STDARG
+#endif /* !defined(HAVE_STDARG) && !defined(HAVE_VARARGS) */
 
 #ifndef JMP_BUF
 # define JMP_BUF sigjmp_buf
@@ -434,5 +446,35 @@ typedef struct sockaddr CLIENT_SOCK_ADDR;
 #else
 typedef struct sockaddr_in CLIENT_SOCK_ADDR;
 #endif /* MIX_SOCKADDR */
+
+#ifdef AIX_BROKEN_HEADERS
+/* string.h */
+int strcasecmp(const char *, const char *);
+int strncasecmp(const char *, const char *, size_t);
+#include <sys/socket.h>
+int accept(int, struct sockaddr *, int *);
+int bind(int, struct sockaddr *, int);
+int connect(int, struct sockaddr *, int);
+int getpeername(int, struct sockaddr *, int *);
+int getsockname(int, struct sockaddr *, int *);
+int getsockopt(int, int, int, char *, int *);
+int listen(int, int);
+int recv(int, char *, int, int);
+int recvfrom(int, char *, int, int, struct sockaddr *, int *);
+int send(int, const char *, int, int);
+int sendto(int, const char *, int, int, struct sockaddr *, int);
+int setsockopt(int, int, int, const char *, int);
+int socket(int, int, int);
+int recvmsg(int, struct msghdr *, int);
+int sendmsg(int, struct msghdr *, int);
+int shutdown(int, int);
+int socketpair(int, int, int, int *);
+int killpg(int ProcessGroup, int Signal);
+int initgroups(char* User, int BaseGID);
+void bzero(char* String, int Length);
+int gethostname(char* Name, int NameLength);
+char *crypt(char* PW, char *Salt);
+#endif /* AIX_BROKEN_HEADERS */
+
 
 #endif /* _PORTABILITY_H_ */

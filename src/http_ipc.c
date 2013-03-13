@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * http_ipc.c,v 1.20 1995/09/21 22:50:55 blong Exp
+ * http_ipc.c,v 1.22 1996/02/22 23:46:59 blong Exp
  *
  ************************************************************************
  *
@@ -21,13 +21,6 @@
  * Based (with modifications) on code by W. Richard Stevens, 
  *	in _Advanced Programming in the UNIX Environment_
  *                                                                       
- * 03-06-95  blong
- *    Added #ifdefs to handle not using this at all for machines like 
- *     Linux.
- *
- * 04-17-95  blong
- *    Added NEED_SPIPE with s_pipe from Stevens _Unix Network Programming_
- *     for SVR3.2 systems without socketpair.
  */
 
 
@@ -49,6 +42,9 @@
 
 #ifdef FD_BSD 
 # include <sys/uio.h>
+# ifdef NEED_SYS_UN_H
+#  include <sys/un.h>
+# endif /* NEED_SYS_UN_H */
 # include <errno.h>
 # include <stddef.h>
 #elif defined(FD_SYSV)
@@ -103,20 +99,20 @@ int recv_fd(int servfd)
 	dat.maxlen = IOBUFSIZE;
 	flag = 0;
 	if (getmsg(servfd, NULL, &dat, &flag) < 0) {
-	    fprintf(stderr,"httpd:getmsg error recv_fd\n");
+	    fprintf(stderr,"HTTPd: getmsg error recv_fd\n");
 	    perror("getmsg");
 	    exit(1);
 	}
 	nread = dat.len;
 	if (nread == 0) {
-	    fprintf(stderr,"httpd: connection closed by server\n");
+	    fprintf(stderr,"HTTPd: connection closed by server\n");
 	    exit(1);
 	}
 	
 	for (ptr = buf; ptr < &buf[nread]; ) {
 	    if (*ptr++ == 0) {
 		if (ptr != &buf[nread-1]) {
-		    fprintf(stderr,"httpd: message format error recv_fd\n");
+		    fprintf(stderr,"HTTPd: message format error recv_fd\n");
 		    perror("recv_fd");
 		    exit(1);
 		}
@@ -266,18 +262,18 @@ int recv_fd(int servfd) {
 #endif /* FD_BSDRENO */
     
     if ((nread = recvmsg(servfd, &msg, 0)) < 0) {
-      fprintf(stderr,"httpd: recvmsg error");
+      fprintf(stderr,"HTTPd: recvmsg error");
       perror("recvmsg");
       exit(1);
     } else if (nread == 0) {
-      fprintf(stderr, "httpd: connection closed by server");
+      fprintf(stderr, "HTTPd: connection closed by server");
       exit(1);
     }
     
     for (ptr = buf; ptr < &buf[nread]; ) {
       if (*ptr++ == 0) {
 	if (ptr != &buf[nread-1]) {
-	  fprintf(stderr, "httpd:message format error");
+	  fprintf(stderr, "HTTPd: message format error");
 	  exit(1);
 	}
 	status = *ptr & 255;
@@ -288,7 +284,7 @@ int recv_fd(int servfd) {
 	    if (msg.msg_accrightslen != sizeof(int)) 
 #endif /* FD_BSDRENO */	
 	      {
-		fprintf(stderr, "httpd: status = 0 but no fd");
+		fprintf(stderr, "HTTPd: status = 0 but no fd");
 		exit(1);
 	      }
 #ifdef FD_BSDRENO

@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * util.h,v 1.14 1995/11/28 09:02:22 blong Exp
+ * util.h,v 1.18 1996/03/27 20:44:32 blong Exp
  *
  ************************************************************************
  *
@@ -23,6 +23,12 @@
 #include <netinet/in.h>
 #include <time.h>
 #include <sys/stat.h>
+
+/* getline options */
+#define G_RESET_BUF	1
+#define G_FLUSH		2
+#define G_SINGLE_CHAR   4
+
 
 /* util function prototypes */
 void inststr(char *dst[], int argc, char *src);
@@ -43,7 +49,8 @@ void getparents(char *name);
 void no2slash(char *name);
 uid_t uname2id(char *name);
 gid_t gname2id(char *name);
-int getline(int sd, char *s, int n, int reset, unsigned int timeout);
+int getline(sock_buf *sb, char *s, int n, int options, unsigned int timeout);
+sock_buf *new_sock_buf(per_request *reqInfo, int sd);
 int eat_ws (FILE* fp);
 int cfg_getline(char *s, int n, FILE *f);
 void getword(char *word, char *line, char stop);
