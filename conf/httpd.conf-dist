@@ -1,0 +1,59 @@
+# This is the main server configuration file. It is best to 
+# leave the directives in this file in the order they are in, or
+# things may not go the way you'd like. See URL http://hoohoo.ncsa.uiuc.edu/
+# for instructions.
+
+# Do NOT simply read the instructions in here without understanding
+# what they do, if you are unsure consult the online docs. You have been
+# warned.  
+
+# Rob McCool (comments, questions to httpd@ncsa.uiuc.edu)
+
+# ServerType is either inetd, or standalone.
+
+ServerType standalone
+
+# If you are running from inetd, go to "ServerAdmin".
+
+# Port: The port the standalone listens to. For ports < 1023, you will
+# need httpd to be run as root initially.
+
+Port 80
+
+# If you wish httpd to run as a different user or group, you must run
+# httpd as root initially and it will switch.  
+
+# User/Group: The name (or #number) of the user/group to run httpd as.
+
+User nobody
+Group #-1
+
+# ServerAdmin: Your address, where problems with the server should be
+# e-mailed.
+
+ServerAdmin you@your.address
+
+# ServerRoot: The directory the server's config, error, and log files
+# are kept in
+
+ServerRoot /usr/local/etc/httpd
+
+# ErrorLog: The location of the error log file. If this does not start
+# with /, ServerRoot is prepended to it.
+
+ErrorLog logs/error_log
+
+# TransferLog: The location of the transfer log file. If this does not
+# start with /, ServerRoot is prepended to it.
+
+TransferLog logs/access_log
+
+# PidFile: The file the server should log its pid to
+PidFile logs/httpd.pid
+
+# ServerName allows you to set a host name which is sent back to clients for
+#your server if it's different than the one the program would get (i.e. use
+#"www" instead of the host's real name).
+
+#ServerName new.host.name
+

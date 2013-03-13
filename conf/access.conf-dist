@@ -1,0 +1,36 @@
+# access.conf: Global access configuration
+# Online docs at http://hoohoo.ncsa.uiuc.edu/
+# I suggest you consult them; this is important and confusing stuff.
+
+# /usr/local/etc/httpd/ should be changed to whatever you set ServerRoot to.
+<Directory /usr/local/etc/httpd/cgi-bin>
+Options Indexes FollowSymLinks
+</Directory>
+
+# This should be changed to whatever you set DocumentRoot to.
+
+<Directory /usr/local/etc/httpd/htdocs>
+
+# This may also be "None", "All", or any combination of "Indexes",
+# "Includes", or "FollowSymLinks"
+
+Options Indexes FollowSymLinks
+
+# This controls which options the .htaccess files in directories can
+# override. Can also be "None", or any combination of "Options", "FileInfo", 
+# "AuthConfig", and "Limit"
+
+AllowOverride All
+
+# Controls who can get stuff from this server.
+
+<Limit GET>
+order allow,deny
+allow from all
+</Limit>
+
+</Directory>
+
+# You may place any other directories you wish to have access
+# information for after this one.
+
