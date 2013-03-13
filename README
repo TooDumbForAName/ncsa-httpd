@@ -1,0 +1,111 @@
+NCSA HTTP server
+================
+
+Beta Release 0.5
+
+Final release for Gopher and Group Annotation features. In future releases,
+  Gopher support will not reappear, and Group Annotation features will reappear
+  in a more protocol-supported fashion.
+
+This code is in the public domain. Specifically, we give to the public
+domain all rights for future licensing of the source code, all resale
+rights, and all publishing rights.
+
+We ask, but do not require, that the following message be included in
+all derived works:
+
+Portions developed at the National Center for Supercomputing
+Applications at the University of Illinois at Urbana-Champaign.
+
+THE UNIVERSITY OF ILLINOIS GIVES NO WARRANTY, EXPRESSED OR IMPLIED,
+FOR THE SOFTWARE AND/OR DOCUMENTATION PROVIDED, INCLUDING, WITHOUT
+LIMITATION, WARRANTY OF MERCHANTABILITY AND WARRANTY OF FITNESS FOR A
+PARTICULAR PURPOSE.
+
+
+Now that that's out of the way, we can move on to more interesting
+things.
+
+OVERVIEW
+--------
+
+    You've found the Beta release of NCSA's HTTP server. This code is
+in testing and development, but is currently fully functional as a
+simple HTTP server.
+
+
+NEW IN RELEASE 0.5
+------------------
+
+    o Slight bug in gopher support fixed
+    o Standalone support added
+
+NEW IN RELEASE 0.4
+------------------
+
+    o Added annotation server support.  See README.GROUP-ANNOTATIONS.
+    o Added access logging capability.
+    o Added HTTP/1.0 compatibility (3rd+ args of GET command ignored).
+    o Changed handling of full hostnames.
+    o Fixed bug with index.html not being recognized unless a trailing
+      slash was appended to the directory name.
+    o Fixed bug with extraneous null appended to end of file data
+      stream.
+    o Fixed bug handling directory URL's with trailing slashes.
+    o Made a little more Ultrix-friendly.
+
+NEW IN RELEASE 0.3
+------------------
+
+    o Security hole (should be the last) fixed
+    o Nearly complete drop-in gopher support. See README.GOPHER for details
+    o Not being able to find the config file does not send back a path
+
+NEW IN RELEASE 0.2
+------------------
+
+    o Two security holes fixed
+    o Double slashes in root index fixed
+    o Not being able to find the error files no longer hangs the server
+
+FEATURES
+--------
+
+    o Directory aliasing and denial. The server can be configured to
+map different directories to different places in the filesystem, and
+easily deny access to a particular directory or file by mapping it to
+something which does not exist. The interface is designed to be simple.
+
+    o Automatic directory index files and on-the-fly index generation.
+If the server finds that the client is requesting a directory, it
+first checks for a file, by default called "index.html" but which can
+be compiled to any name, and if it does not find such a file it
+generates an HTML index of the directory and sends it back to the
+client.
+
+    o Drop-in gopher support. This server is able to automatically
+interpret gopher directory structures and construct, on the fly, HTML
+indexes of them. Should be faster than gopherd in HTML mode.
+
+    o Group annotation server capabilities.  See
+README.GROUP-ANNOTATIONS for more details.
+
+    o Access logging.  See httpd.h for more details.
+
+    o Designed to be small and low-impact: the entire source is
+3,000 lines, with full gopher, annotation server, and logging support.
+
+FUTURE PLANS
+------------
+
+    o HTTP2 (HTTP/1.0) support.
+
+    o On the fly uncompression.
+
+That should be all you need. E-mail problems, suggestions for features
+or documentation, cash donations, food, etc. to httpd@ncsa.uiuc.edu.
+We encourage you to try and break the server, or compromise its
+security, and let us know how you did it so we can fix it.
+
+Rob, Eric, Marc
+httpd@ncsa.uiuc.edu

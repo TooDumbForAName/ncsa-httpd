@@ -1,0 +1,134 @@
+INSTALLATION
+------------
+
+    Unless you're installing this server standalone, you'll need to be able 
+to edit /etc/services and /etc/inetd.conf. 
+
+
+    If you're on a Sun Sparc, a DECstation 3000/5000 or DECstation
+AXP, an IBM RS/6000, or an SGI, you can download a binary of the
+server from ftp.ncsa.uiuc.edu, /Mosaic/ncsa_httpd. The binaries have
+been compiled with the following options:
+
+All error files are in /usr/local/etc/httpd
+The config file is /usr/local/etc/httpd/httpd.conf
+The default port number is 80.
+The maximum number of aliases is 20.
+The name of a directory's index file is index.html.
+The server does not truncate lines.
+Errors are not logged to syslog.
+HTTP accesses are logged to /usr/local/etc/httpd/access_log
+The annotation server support is turned off.
+
+    The executables named httpd do not have gopher support, while
+those named httpd.gopher do have it. 
+
+    If you want to compile the source yourself, do that first. The
+httpd.h file should have fairly straightforward instructions for what
+you need to configure. The Makefile has various options for different
+platforms, once again it should be fairly straightforward.
+
+If you have any problems, or things you would like to see changed so
+as to make them more understandable at this stage, please e-mail
+httpd@ncsa.uiuc.edu with suggestions.
+
+
+Once you have a binary
+......................
+
+
+1. Decide where you want your server to live. A good place is
+/usr/local/etc/httpd, because that's where the error and config files
+are expected to be. We recommend placing your server under the name
+/usr/local/etc/httpd/httpd, and that way all of your httpd stuff is in
+one place.
+
+1.5. Decide if you want to run the server standalone, or from inetd. If
+you are not sure, running standalone is generally faster. If you are choosing
+an inetd based server, skip forward to step 2.
+
+To use the server standalone, simply execute it with the -s and -p options. The
+-p followed by a number tells the server what port to listen to. In order to
+listen to ports with a number < 1024, you'll need to be root to run the server
+initially.
+
+Example: 
+httpd -s -p 8081
+
+To start a standalone server listening to port 8081.
+
+Skip to step 4.
+
+2. Edit /etc/services, and place a line in there which tells inetd
+which port you want your http server to listen to.  Make sure the
+define for ANN_PORT in httpd.h and this line agree.  Example: 
+
+http            80/tcp
+
+
+3. Edit /etc/inetd.conf, and place a line in there which tells inetd
+to fire off a server each time someone connects to that port. Example:
+
+http    stream  tcp     nowait  nobody  /usr/local/etc/httpd/httpd httpd
+
+assuming you decided to put the server binary in /usr/local/etc/httpd.
+It is an excellent idea to run httpd under user ID 'nobody' (as shown
+above), as there's not much damage 'nobody' can do.
+
+
+4. If you are running with access logging enabled, make sure
+/usr/local/etc/httpd/access_log (or the appropriate path/file) is
+writeable by the user ID being used to run httpd (usually, nobody).
+If this file is not writeable by that user ID, httpd will not work.
+
+
+5. Place the error message files where the server is expecting them.
+If you used a precompiled binary, create the directory
+/usr/local/etc/httpd/errors, and copy all of the html files from this
+distribution in there. If you didn't use the precompiled one, create
+whatever directory you decided to put them under. Be sure they are
+readable.  You can feel free to edit the messages to specify problem
+report addresses or whatnot.  If you are compiling the server from the
+source, you can put these wherever you like.
+
+
+6. Create a httpd.conf in /usr/local/etc/httpd/httpd.conf for your
+server. If you are compiling from the source, the #define CONFIG_FILE
+tells where the server will look for this file by default. The server
+can also be started with the -f flag and a filename to override this
+default.
+
+The syntax for the httpd.conf file is very simple. Every line which
+begins with a # sign is a comment. Besides that, lines are of the
+format:
+
+alias:realdir
+
+Where alias is the name which should be seen by the clients, and
+realdir is the real server directory which should be mapped to that
+location. Examples:
+
+/foo:/bletch
+
+Makes it so that all client requests beginning with /foo are mapped to
+the real directory /bletch.
+
+/:/port4/web-docs
+
+This has the effect of mapping all client requests into the directory
+/port4/web-docs, which makes for easy centralization.
+
+Aliases are cumulative; once you map something, all of your subsequent
+aliases will have the previous ones expanded in the alias name before
+they themselves are interpreted. For example:
+
+/:/port4/web-docs
+/foo:/port4/web-docs/bletch
+
+This would re-map all access to /port4/web-docs/foo to
+/port4/web-docs/bletch. 
+
+To deny access to a directory, map it to something non-existent like /deny.
+
+
+httpd@ncsa.uiuc.edu
