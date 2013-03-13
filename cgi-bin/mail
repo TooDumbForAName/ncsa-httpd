@@ -1,0 +1,319 @@
+#!/usr/local/bin/perl 
+
+# ======================================================================
+# WebMonitor Standalone Module: mail
+#
+#                               CGI script for providing form and script
+#                                to send mail to configured system users
+#
+# required files: mail.list
+#                                     Text file with users nicknames and
+#                                       email addresses in the format of
+#                                             <nickname>:<email address>
+#                      Keep "mail.list" in same directory as mail script
+#                                 NOTE: you can even have group aliases!
+#                                just separate the addresses with commas
+#         Make sure you 'chmod 0644 mail.list' so the server can read it
+#                             +-----------------------------------------
+#                   Example:  |webmaster:admin@machine
+#                             |john-doe:jdoe
+#                             |carlos:cpero@ncsa.uiuc.edu
+#                             |group:leader@domain.com,member@domain.com
+#                             +-----------------------------------------
+# ======================================================================
+# Carlos A. Pero (cpero@ncsa.uiuc.edu)              last update  4/30/95
+# ======================================================================
+# Documentation for WebMonitor can be found at
+#                          <URL:http://hoohoo.ncsa.uiuc.edu/webmonitor/>
+# ======================================================================
+# This code is in the public domain. Specifically, we give to the public
+# domain all rights for future licensing of the source code, all resale
+# rights, and all publishing rights.
+# 
+# We ask, but do not require, that the following message be included in
+# all derived works:
+# 
+# Portions developed at the National Center for Supercomputing
+# Applications at the University of Illinois at Urbana-Champaign.
+# 
+#
+# THE UNIVERSITY OF ILLINOIS GIVES NO WARRANTY, EXPRESSED OR IMPLIED,
+# FOR THE SOFTWARE AND/OR DOCUMENTATION PROVIDED, INCLUDING, WITHOUT
+# LIMITATION, WARRANTY OF MERCHANTABILITY AND WARRANTY OF FITNESS FOR A
+# PARTICULAR PURPOSE.
+# ======================================================================
+# This script can be referenced 2 ways for the best flexibility:
+#
+# DIRECTLY, <A HREF="/cgi-bin/mail?nickname">
+# This will generate an email form for the person named in 'nickname',
+# and if they exist in the 'mail.list' file.
+# If no 'nickname' is specified in the QUERY_STRING when the script is
+# first invoked, or the nickname cannot be found in the 'mail.list', 
+# an email form with a SELECT box of all valid nicknames is generated.
+# When the email form is submitted, it will call itself via method of POST,
+# and send the email to the recipient, outputting a confirmation message.
+# If the HTTP_REFERER was trasmitted when the script was first invoked,
+# there will be a hyperlink available to go back to that page (such as
+# the user's home page).
+#
+# FORWARDING RESULTS, <FORM METHOD="POST" ACTION="/cgi-bin/mail?nickname">
+# This will forward the results from the FORM, which can exist anywhere,
+# to the recipient specified by 'nickname'.  Since the 'nickname' is in
+# the QUERY_STRING, the FORM *must* use the METHOD="POST", otherwise the
+# recipient's nickname will be blown away.
+# Users may want to include a:
+#    <INPUT TYPE="hidden" NAME="next-url" VALUE="/~user/received.html">
+# If this is present in the FORM input, the client will be redirected
+# to this HTML file as a confirmation message instead of the default.
+# In addition, the user can also define any of the following input names
+# in their form to better customize the output mailed back to them.
+#    <INPUT TYPE="hidden" NAME="subject" VALUE="My survey results">
+#    <INPUT TYPE="hidden" NAME="from-name" VALUE="Average Web user">
+#    <INPUT TYPE="hidden" NAME="from-email" VALUE="jdoe@domain.com">
+# These values will then be used in the header of the email message.
+# Otherwise, default values will be substituted.
+# ======================================================================
+
+
+########################################################################
+########## Configurable variables ######################################
+
+$SENDMAIL = '/usr/sbin/sendmail';
+#                                   The location of your sendmail binary
+
+## Also, make sure the first line of this script points
+## to your PERL binary
+
+########## Nothing else to change ######################################
+########################################################################
+
+
+$SCRIPT = $ENV{'SCRIPT_NAME'};
+
+#### Do standard HTTP stuff ####
+&cgi_receive;
+&cgi_decode;
+&cgi_header;
+
+#### Output email form unless you are receiving FORM input already ####
+&print_form unless keys %FORM;
+
+#### Make sure required fields are filled out ####
+if ($FORM{'nickname'}) {
+    #### This section is for receiving from this form ####
+    &error_blank_field('your name')  unless ($FORM{'from-name'});
+    &error_blank_field('your email address in the form of <I>name@domain</I>') unless ($FORM{'from-email'} =~ /\@/);
+    &error_blank_field('the subject of the message') unless ($FORM{'subject'});
+    &error_blank_field('your message') unless ($FORM{'message'});
+}
+else {
+    #### This section is for user's forms ####
+    #### Such as ACTION="/cgi-bin/mail?carlos" to have results forwarded ####
+    $FORM{'nickname'} = $ENV{'QUERY_STRING'};
+}
+
+#### Lookup email address based on 'nickname' ####
+open (MAILNAMES, "mail.list") || die ("$SCRIPT: Can't open mail.list: $!\n");
+while (<MAILNAMES>) {
+    chop;
+    ($nick, $addr) = split(/:/, $_);
+    $ADDRESS{$nick} = $addr;
+}
+close (MAILNAMES);
+&error_blank_field('the nickname of the recipient') unless ($ADDRESS{$FORM{'nickname'}});
+
+#### Make sure all necessary variables for email message are filled in
+($FORM{'subject'}) || ($FORM{'subject'} = "FORM results");
+($FORM{'from-email'}) || ($FORM{'from-email'} = $ADDRESS{$FORM{'nickname'}});
+($FORM{'from-name'}) || ($FORM{'from-name'} = "WebMonitor mail");
+
+open (MAIL, "| $SENDMAIL $ADDRESS{$FORM{'nickname'}}") || die ("$SCRIPT: Can't open $mailprog: $!\n");
+print MAIL "Reply-to: $FORM{'from-email'} ($FORM{'from-name'})\n";
+print MAIL "From: $FORM{'from-email'} ($FORM{'from-name'})\n";
+print MAIL "To: $ADDRESS{$FORM{'nickname'}}\n";
+print MAIL "Subject: $FORM{'subject'}\n";
+print MAIL "\n";
+print MAIL "=============================================================\n";
+print MAIL "NOTE:  This message was sent through the WebMonitor mail form\n";
+print MAIL "=============================================================\n";
+print MAIL "REMOTE HOST:        $ENV{'REMOTE_HOST'}\n";
+print MAIL "REMOTE ADDRESS:     $ENV{'REMOTE_ADDR'}\n";
+print MAIL "HTTP_USER_AGENT:    $ENV{'HTTP_USER_AGENT'}\n";
+print MAIL "=============================================================\n";
+print MAIL "\n";
+if ($ENV{'QUERY_STRING'}) {
+    &dump_values(FORM, MAIL);
+}
+else {
+    print MAIL "$FORM{'message'}\n";
+}
+print MAIL "\n";
+close (MAIL);
+
+#### Now, redirect if "next-url" is included
+if ($FORM{'next-url'}) {
+    print "Location: $FORM{'next-url'}\n";
+    print "\n";
+    exit;
+}
+
+#### Prevent HTML output
+foreach $key (keys %FORM) {
+    $FORM{$key} =~ s/</\&lt;/g;
+    $FORM{$key} =~ s/>/\&gt;/g;
+}
+
+#### Output confirmation message ####
+print qq|<HTML><HEAD><TITLE>WebMonitor-Email Sent</TITLE></HEAD><BODY>\n|;
+print qq|<H1>$ENV{'SERVER_NAME'} Email Sent</H1>\n|;
+print qq|The following message has been sent.\n|;
+print qq|You can now return to <A HREF="$FORM{'previous-url'}">where you were</A>.\n| if ($FORM{'previous-url'});
+print qq|<HR>\n|;
+print "<PRE>\n";
+print "Reply-to: $FORM{'from-email'} ($FORM{'from-name'})\n";
+print "From: $FORM{'from-email'} ($FORM{'from-name'})\n";
+print "To: $ADDRESS{$FORM{'nickname'}}\n";
+print "Subject: $FORM{'subject'}\n";
+print "\n";
+if ($ENV{'QUERY_STRING'}) {
+    &dump_values(FORM, STDOUT);
+}
+else {
+    print "$FORM{'message'}\n";
+}
+print "\n";
+print "</PRE>\n";
+print "</BODY>\n";
+exit;
+
+#####################################################################
+#### SUBROUTINES ####################################################
+
+sub error_blank_field {
+    local($variable) = @_;
+    print "\n" if ($FORM{'next-url'});
+    print "<HTML><HEAD><TITLE>WebMonitor-Email Error</TITLE></HEAD><BODY>\n";
+    print "<H1>Error!</H1>\n";
+    print "You did not fill in $variable.\n";
+    print "Please go back to the form and do so.\n";
+    print "</BODY>\n";
+    exit;
+}
+
+sub cgi_header {
+    print "Content-type: text/html\n";
+    print "\n" unless ($FORM{'next-url'});
+}        
+
+sub cgi_receive {
+    if ($ENV{'REQUEST_METHOD'} eq "POST") {
+        read(STDIN, $incoming, $ENV{'CONTENT_LENGTH'});
+    }
+    else {
+        $incoming = $ENV{'QUERY_STRING'};
+    }
+}
+
+sub cgi_decode {
+    @pairs = split(/&/, $incoming);
+
+    foreach (@pairs) {
+        ($name, $value) = split(/=/, $_);
+
+        $name  =~ tr/+/ /;
+        $value =~ tr/+/ /;
+        $name  =~ s/%([A-F0-9][A-F0-9])/pack("C", hex($1))/gie;
+        $value =~ s/%([A-F0-9][A-F0-9])/pack("C", hex($1))/gie;
+
+        #### Strip out semicolons unless for special character
+        $value =~ s/;/$$/g;
+        $value =~ s/&(\S{1,6})$$/&\1;/g;
+        $value =~ s/$$/ /g;
+
+        $value =~ s/\|/ /g;
+        $value =~ s/^!/ /g; ## Allow exclamation points in sentences
+
+        #### Skip blank text entry fields
+        next if ($value eq "");
+
+        #### Check for "assign-dynamic" field names
+        #### Mainly for on-the-fly input names, especially checkboxes
+        if ($name =~ /^assign-dynamic/) {
+            $name = $value;
+            $value = "on";
+        }
+
+	#### Allow for multiple values of a single name
+        $FORM{$name} .= ", " if ($FORM{$name});
+
+        $FORM{$name} .= $value;
+    }
+}
+
+sub dump_values {
+    local($env, $handle) = @_;
+    eval "\@keys = keys \%$env";
+    eval "\@values = values \%$env";
+    ($handle eq "STDOUT") && (print $handle "<PRE>\n");
+    while ($#keys >= 0) {
+	$key = pop(@keys);
+	$value = pop(@values);
+	if ($value =~ /[\cM\n]/) {
+	    print $handle "($key)\n";
+	    print $handle "-" x 70, "\n", $value, "-" x 70, "\n";
+	}
+	else {
+            print $handle "($key)  $value\n";
+	}
+    }
+    ($handle eq "STDOUT") && (print $handle "</PRE>\n");
+
+}
+
+sub print_form {
+    #### Assign path_info and query_string if necessary
+    #### $path_info = "";
+
+    open (MAILNAMES, "mail.list") || die ("$SCRIPT: Can't open mail.list: $!\n");
+    while (<MAILNAMES>) {
+	chop;
+	($nickname, $address) = split(/:/, $_);
+	$ADDRESS{$nickname} = $address;
+    }
+    close (MAILNAMES);
+
+    print qq|<HTML><HEAD><TITLE>WebMonitor-Email Form</TITLE></HEAD><BODY>\n|;
+    print qq|<H1>$ENV{'SERVER_NAME'} <A HREF="http://hoohoo.ncsa.uiuc.edu/webmonitor/module-mail.html">Email Form</A></H1>\n|;
+    print qq|<FORM METHOD="POST" ACTION="$SCRIPT$path_info$query_string">\n|;
+    print qq|<HR>\n|;
+    print qq|<INPUT TYPE="submit" VALUE="Send Email"> to |;
+
+
+    if ($ADDRESS{$ENV{'QUERY_STRING'}}) {
+	print qq|<B>$ENV{'QUERY_STRING'}</B> <I>($ADDRESS{$ENV{'QUERY_STRING'}})</I>\n|;
+	print qq|<INPUT TYPE="hidden" NAME="nickname" VALUE="$ENV{'QUERY_STRING'}">\n|;
+    }
+    else {
+	print qq|<SELECT NAME="nickname">\n|;
+	print qq|<OPTION>Select name...\n|;
+        foreach $nickname (sort keys %ADDRESS) {
+	    print qq|<OPTION>$nickname\n|;
+        }
+        print qq|</SELECT>\n|;
+    }
+
+
+    print qq|<HR>\n|;
+    print qq|<PRE>|;
+    print qq|    Your Name: <INPUT NAME="from-name" SIZE="30">\n|;
+    print qq|Email Address: <INPUT NAME="from-email" SIZE="30">\n|;
+    print qq|      Subject: <INPUT NAME="subject" SIZE="40">    <INPUT TYPE="reset" VALUE="Clear Message">\n|;
+    print qq|</PRE>\n|;
+    print qq|<TEXTAREA NAME="message" ROWS="15" COLS="70"></TEXTAREA>\n|;
+    print qq|<INPUT TYPE="hidden" NAME="previous-url" VALUE="$ENV{'HTTP_REFERER'}">\n|;
+    print qq|</FORM>\n|;
+    print qq|</BODY>\n|;
+
+    exit;
+}
+

@@ -1,0 +1,12 @@
+*** ../../sgi5/httpd_1.4.2/src/http_get.c	Thu Jun 22 18:48:27 1995
+--- http_get.c	Fri Jun 23 11:09:57 1995
+***************
+*** 208,214 ****
+          }
+          else {
+              probe_content_type(ifile);
+- 	    fprintf(stderr,"content_type: %s\n",content_type);
+              if(!strcmp(content_type,CGI_MAGIC_TYPE))
+                  send_cgi("GET",ifile,pa,args,&finfo,in,fd);
+              else
+--- 208,213 ----
