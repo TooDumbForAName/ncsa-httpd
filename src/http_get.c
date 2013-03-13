@@ -148,7 +148,8 @@ void send_node(char *file, char *args, int in, FILE *fd)
 
         if(file[strlen(file) - 1] != '/') {
             char url[MAX_STRING_LEN];
-            strcpy_dir(ifile,file);
+	    /* SSG 4/13/95 changed to limited version for security */
+            strncpy_dir(ifile,file, MAX_STRING_LEN);
             unmunge_name(ifile);
             construct_url(url,ifile);
             escape_url(url);

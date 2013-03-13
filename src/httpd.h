@@ -629,3 +629,7 @@ int initgroups(const char *name, gid_t basegid);
 #endif
 char *get_remote_logname(FILE *fd);
 char *rfc931(struct sockaddr_in *rmt_sin,struct sockaddr_in *our_sin);
+
+/* new util.c functions - SSG 4/13/95 */
+void strncpy_dir(char *d, char *s, int n);
+void lim_strcpy(char *d, char *s, int n);

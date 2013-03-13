@@ -244,6 +244,37 @@ void strcpy_dir(char *d, char *s) {
     d[x] = '\0';
 }
 
+/*
+ * A version of strcpy_dir that limits the number of characters
+ * that will be copied to n - 1. If s is of length n or greater,
+ * that portion is not copied and d is null-terminated at position
+ * n. This fixes potential security hole in evaluate_acess.
+ * SSG 4/15/95
+ */
+void strncpy_dir(char *d, char *s, int n) {
+    register int x;
+    
+    for(x=0;s[x] && x < (n - 1);x++)
+        d[x] = s[x];
+
+    if(s[x-1] != '/' && x < (n - 1)) d[x++] = '/';
+    d[x] = '\0';
+}
+
+/*
+ * My version of strncpy. This will null terminate d if
+ * s is n characters or longer. It also will only copy
+ * n - 1 characters to d. SSG 4/13/95
+ */
+void lim_strcpy(char *d, char *s, int n) 
+{
+    while (--n && (*d++ = *s++))
+	;
+
+    if (!n) 
+	*d = '\0';
+}
+
 void chdir_file(char *file) {
     int i;
 

@@ -88,11 +88,11 @@ all: httpd
 ibm:
 	make tar AUX_CFLAGS=-DAIX CC=gcc CFLAGS=-O2
 
-sun:
+sunos:
 	make tar AUX_CFLAGS=-DSUNOS4 CC=gcc CFLAGS=-O2
 
 hp:
-	make tar AUX_CFLAGS=-DHPUX CC=gcc CFLAGS=-O2
+	make tar AUX_CFLAGS=-DHPUX CC=cc CFLAGS="-O -Aa"
 
 sgi:
 	make tar AUX_CFLAGS=-DIRIX EXTRA_LIBS=-lsun CC=cc CFLAGS=-O2
@@ -102,6 +102,9 @@ decmips:
 
 decaxp:
 	make tar AUX_CFLAGS=-DOSF1 CC=cc CFLAGS=-O2
+
+solaris:
+	make tar AUX_CFLAGS=-DSOLARIS2 EXTRA_LIBS="-lsocket -lnsl" CC=gcc CFLAGS=-O2
 
 httpd: $(OBJS)
 	$(CC) $(LFLAGS) -o httpd $(OBJS) $(EXTRA_LIBS)

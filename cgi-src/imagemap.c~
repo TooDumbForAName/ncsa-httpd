@@ -37,13 +37,6 @@
 **
 ** Fixed bug:  virtual URLs are now understood.
 ** Better error reporting when not able to open configuration file.
-**
-**
-** 04/13/95: Stanford S. Guillory, guillory@ncsa.uiuc.edu
-**
-** Fixed a couple of potential buffer overflow problems when copying
-** translated path to configuration file name. Also got rid of a strcat
-** unto a literal string. Whoa!
 */
 
 #include <stdio.h>
@@ -94,20 +87,12 @@ int main(int argc, char **argv)
      * we get the translated path, and skip reading the configuration file.
      */
     if (strchr(mapname,'/')) {
-	/* Another security fix courtesy of SSG 4/13/95 Thanks CERN! */
-	char* path = getenv("PATH_TRANSLATED");
-	if (strlen(path) >= MAXLINE)
-	    servererr("Can't support paths longer than 500 characters!");
-	strcpy(conf, path);
-	goto openconf;
+      strcpy(conf,getenv("PATH_TRANSLATED"));
+      goto openconf;
     }
     
-    if ((fp = fopen(CONF_FILE, "r")) == NULL) {
-	/* dude was catting literal string! SSG 4/13/95 */
-	char buf[100];  /* size is known to be < 100 SSG 4/13/95 */
-	sprintf (buf, "Couldn't open configuration file: %s", CONF_FILE);
-        servererr(buf);
-    }
+    if ((fp = fopen(CONF_FILE, "r")) == NULL)
+        servererr(strcat("Couldn't open configuration file:", CONF_FILE));
 
     while(!(getline(input,MAXLINE,fp))) {
         char confname[MAXLINE];
@@ -126,16 +111,12 @@ int main(int argc, char **argv)
      * name exists, jumping to the opening of the map file if it does.
      */
     if(feof(fp)) {
-	struct stat sbuf;
-	/* Another security fix courtesy of SSG 4/13/95 Thanks CERN! */
-	char* path = getenv("PATH_TRANSLATED");
-	if (strlen(path) >= MAXLINE)
-	    servererr("Can't support paths longer than 500 characters!");
-	strcpy(conf, path);
-	if (!stat(conf,&sbuf) && ((sbuf.st_mode & S_IFMT) == S_IFREG))
-	    goto openconf;
-	else
-	    servererr("Map not found in configuration file.");
+      struct stat sbuf;
+      strcpy(conf,getenv("PATH_TRANSLATED"));
+      if (!stat(conf,&sbuf) && ((sbuf.st_mode & S_IFMT) == S_IFREG))
+	goto openconf;
+      else
+	servererr("Map not found in configuration file.");
     }
     
   found:
@@ -147,12 +128,8 @@ int main(int argc, char **argv)
     conf[j] = '\0';
 
   openconf:
-    if ((fp = fopen(conf, "r")) == NULL) {
-	/* dude was catting literal string! SSG 4/13/95 */
-	char buf[600];  /* size is known to be < 600 SSG 4/13/95 */
-	sprintf (buf, "Couldn't open configuration file: %s", conf);
-        servererr(buf);
-    }
+    if(!(fp=fopen(conf,"r")))
+        servererr(strcat("Couldn't open configuration file:", conf));
 
     while(!(getline(input,MAXLINE,fp))) {
         char type[MAXLINE];

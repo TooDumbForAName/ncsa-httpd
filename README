@@ -8,8 +8,9 @@ demonstration, etc.
 Documentation can also be found where you found this .tar file, in a file
 called httpd_docs.tar.Z.
 
---Rob, Marc, and Eric httpd@ncsa.uiuc.edu
+This version fixes several more possible security holes.
 
+ -- The NCSA HTTPD Server Development Group (httpd@void.ncsa.uiuc.edu)
 
 This code is in the public domain. Specifically, we give to the public
 domain all rights for future licensing of the source code, all resale

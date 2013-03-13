@@ -21,11 +21,14 @@ all: htpasswd unescape inc2shtml
 ibm: $(OBJS)
 	make all CC=gcc
 
-sun: $(OBJS)
+sunos: $(OBJS)
+	make all CC=gcc
+
+solaris: $(OBJS)
 	make all CC=gcc
 
 hp: $(OBJS)
-	make all CC=gcc
+	make all CC=cc CFLAGS=-Ae
 
 sgi: $(OBJS)
 	make all CC=cc

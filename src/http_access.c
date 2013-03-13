@@ -95,8 +95,8 @@ void evaluate_access(char *p, struct stat *finfo, int m, int *allow,
     char errstr[MAX_STRING_LEN];
     register int x,y,z,n;
 
-    if(S_ISDIR(finfo->st_mode)) strcpy_dir(path,p);
-    else strcpy(path,p);
+    if(S_ISDIR(finfo->st_mode)) strncpy_dir(path,p, MAX_STRING_LEN);
+    else lim_strcpy(path,p, MAX_STRING_LEN);
 
     no2slash(path);
 

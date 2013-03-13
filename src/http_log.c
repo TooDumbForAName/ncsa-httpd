@@ -104,11 +104,14 @@ void log_error_noclose(char *err) {
 }
 
 void log_reason(char *reason, char *file) {
-    char t[MAX_STRING_LEN];
+    char *buffer;
 
-    sprintf(t,"httpd: access to %s failed for %s, reason: %s",
+    buffer = (char *)malloc(strlen(reason)+strlen(remote_name)+
+			    strlen(file)+50); 
+    sprintf(buffer,"httpd: access to %s failed for %s, reason: %s",
             file,remote_name,reason);
-    log_error(t);
+    log_error(buffer);
+    free(buffer);
 }
 
 void begin_http_header(FILE *fd, char *msg) {

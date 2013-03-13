@@ -589,7 +589,7 @@ void index_directory(char *name, FILE *fd)
     char unmunged_name[MAX_STRING_LEN];
     char *tmp;
 
-    strcpy_dir(unmunged_name,name);
+    strncpy_dir(unmunged_name,name, MAX_STRING_LEN);
     unmunge_name(unmunged_name);
 
     if(!(d=opendir(name)))

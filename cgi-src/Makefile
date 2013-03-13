@@ -19,11 +19,14 @@ all: query post-query imagemap jj phf
 ibm:
 	make all CC=gcc
 
-sun:
+sunos:
+	make all CC=gcc
+
+solaris:
 	make all CC=gcc
 
 hp: 
-	make all CC=gcc
+	make all CC=cc CFLAGS=-Ae
 
 sgi:
 	make all CC=cc
