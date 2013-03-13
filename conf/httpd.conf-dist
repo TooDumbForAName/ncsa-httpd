@@ -52,8 +52,12 @@ TransferLog logs/access_log
 PidFile logs/httpd.pid
 
 # ServerName allows you to set a host name which is sent back to clients for
-#your server if it's different than the one the program would get (i.e. use
-#"www" instead of the host's real name).
+# your server if it's different than the one the program would get (i.e. use
+# "www" instead of the host's real name).
+#
+# Note: You cannot just invent host names and hope they work. The name you 
+# define here must be a valid DNS name for your host. If you don't understand
+# this, ask your network administrator.
 
 #ServerName new.host.name
 

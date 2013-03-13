@@ -24,21 +24,23 @@
 #########################################################################
 # To install - Please remove everthing above the #! line.
 # Change the perl path to reflect the location of your perl installation.  
-# Then answer the following questions.
+# Then answer the following question.
 
-# What is the Name of your server? (Not necessary if ServerName is 
-# defined in your httpd.conf file.
-$WebServer = www.ncsa.uiuc.edu;
+# Whereis your web log?
+$WebLOG = "/web1/http/logs/access_log";
 
-# What directory holds your configuration files?
-$CONF_PATH = "/web1/http/conf";
-
-# If you are generating/maintaining HTML Reports what is the Menu Document
-# called?  Set this to "/dev/null" if you don't want to maintain a menu doc.
+# Whereis your HTML Report Menu Document?
 $MenuDoc = "/General/WebReports.html";
+
+# What is the name of your Web Server?
+$WebServer = "www.ncsa.uiuc.edu";
+
+# Where is your httpd.conf file?
+$HTTPD_CONF = "/web1/http/conf/httpd.conf";
 
 # In which directory do you want the output file placed?
 $Output_Path = "/tmp";
+#$Output_Path = "WebLogs/Reports";
 
 ######################################################################
 # DO NOT CHANGE ANTHING BELOW THIS LINE FOR DISTRIBUTION. 
@@ -51,19 +53,9 @@ $Output_Path = "/tmp";
 #      Hyperlinks now relative to the Root of the Web Server.
 #      Thanks to Mark Scott.
 # V1.2 Added -V: Verbose output of progress through log during run.
-# V1.1 Release 10/05/93
-# V2.0 Changed default to verbose.  Now -n option supresses output
-#      for use in crontabs
-# V2.1 Released 12/11/93
-#      Made many changes to make compatible with new release of NCSA_HTTPD
-#      Unfortunately this kludged version wasn't very stable or robust.
-# V2.2 Released 1/21/94
-#      Completely rewritten to accomodate new features inherent in current
-#      releases of NCSA_HTTPD
 ######################################################################
-
 sub USAGE {
-print "USAGE: WebReport [-adtfhe] [-H] [-s] [-vN] [-n] [-l logname] 
+print "USAGE: WebReport [-adtfhe] [-H] [-M] [-s] [-vN] [-l logname] 
                         [-o output directory] [keys]
 	a	All
 	d	Daily
@@ -75,27 +67,27 @@ print "USAGE: WebReport [-adtfhe] [-H] [-s] [-vN] [-n] [-l logname]
 	l	Name of the log file
 	o	Location of the output file
 	H	Print in html format
-	vN	Report Verbosity
-	n	Supress Program Verbosity
+	M	Update the html Menu Document
+	vN	Verbosity
 	D	Current Day only\n";
 print "	keys	To limit the report to specific days, times, files, and/or
 		hosts.  Any combination of keys may be specified.  See
 		examples below.
-		Use the following conventions for the best results:
+		Try to use the following conventions for the best results:
 		Search for a date:   'nn'	ie: 10
 		Search for a time:   'nn:'	ie: 10:
 		Search for a Day:    'Xxx'	ie: Sun or Sunday
 		Search for a file:   'xxx'	ie: software
 		or		     'xx/'	    you may need a leading
 		or		     '/xx'	    or trailing '/'
-		Search for a domain: '.xxx'	ie: .edu or ncsa.\n";
+		Search for a domain: '.xxx'	ie: .edu or ncsa\n";
 print "		WebReport will try to 'do the right thing' but it is safer
 		to limit the type of search by using one of the -d, -t,
 		-f, or -h flags.
 
 
 	 EXAMPLES:
-			WebReport -f Thu Friday 10 11 14 15 Software
+			WebReport Thu Friday 10 11 14 15 Software
 				Will report on the number of people who
 				accessed the Software files on Thursday
 				and Friday during the 10am, 11am, 2pm, 
@@ -103,12 +95,15 @@ print "		WebReport will try to 'do the right thing' but it is safer
 			WebReport -f edu
 				Will report on file accesses that have
 				the edu substring in them.
-			WebReport -h .edu
-				Will report on hosts with edu in the name.\n";
-print "			WebReport -Hneshfl /var/log/access_log
-                                Will silently generate an error report, 
-				a summary report, a host access report, and a 
-				file access report -- all in html format, and
+			WebReport -h edu
+				Will report on hosts with edu in the name.
+			WebReport -fh edu
+				Will report on both hosts and files with 
+				edu in them.\n";
+print "			WebReport -HMeshfl /var/log/access_log
+                                Will generate an error report, a summary
+                                report, a host access report, and a file
+                                access report -- all in html format, and
                                 will automatically update an html Menu
                                 document with links to these reports.\n\n";
 
@@ -139,42 +134,24 @@ else {
         ($day, $month, $date, $time, $TZ, $year) = split (" ",$DATE);
 }
 
-&Getopts('VadDtfhesHMnl:o:v:');
-
-if ($opt_V) {
-print "WARNING: -V is no longer a valid option.  Default is verbose.
-Use -n if you wish to supress output\n";
-$USAGE;
-}
-
-if ($opt_M) {
-print "WARNING: -M is no longer a valid option.  If -H option is used,
-then the Menu Document will be updated automatically.\n";
-$USAGE;
-}
-
-$silent = 1 if ($opt_n);
+&Getopts('adDtfhesHMVl:o:v:');
 
 # Print Usage If no options are passed on the command line.
 &USAGE if (!($opt_d) &! ($opt_t) &! ($opt_f) &! ($opt_e) &! ($opt_h) &! ($opt_s) &! ($opt_a) &! ($opt_D)); 
 
 # If an alternate logfile has been requested
 if (defined $opt_l) {
-	$TransferLog = $opt_l;
+	$WebLOG = $opt_l;
 }
 
 # If an alternate output directory has been requested
 if (defined $opt_o) {
 	$Output_Path = $opt_o;
-	chop $Output_Path if ($Output_Path =~ /\n/);
-	chop $Output_Path if ($Output_Path =~ /\/$/);
 }
-
 
 # If you want a printout for today only
 if ($opt_D) {
 $SearchDate = "\\b" . $date . "\\b" . "|";
-$SearchDescriptor = $SearchDescriptor . "Today, ";
 }
 
 # If there are no search key limiters.
@@ -191,27 +168,21 @@ else {
 	for ($i=0;$i<=$#ARGV;$i++) {
 		if ($ARGV[$i] =~ /Mon|Tue|Wed|Thu|Fri|Sat|Sun/) {
 			$SearchDay = $SearchDay . $ARGV[$i] . "|";
-			$SearchDescriptor = $SearchDescriptor . "Day: " . $ARGV[$i] . ", ";
 		}
 		elsif ($ARGV[$i] =~ /\d+:/) {
 			chop $ARGV[$i];
-			#chop $ARGV[$i] if ($ARGV[$i] =~ /\n/);
 			$SearchTime = $SearchTime . $ARGV[$i] . "|";
-			$SearchDescriptor = $SearchDescriptor . "Time: " . $ARGV[$i] . ":00" . ", ";
 		}
 		elsif ($ARGV[$i] =~ /\./) {
-			#chop $ARGV[$i];
+			chop $ARGV[$i];
 			$SearchHost = $SearchHost . $ARGV[$i] . "|";
-			$SearchDescriptor = $SearchDescriptor . "Host: " . $ARGV[$i] . ", ";
 		}
 		elsif ($ARGV[$i] =~ /\d+/) {
 		die "This does not make sense with the -D option\n" if ($opt_D);
 		$SearchDate = $SearchDate . "\\b" . $ARGV[$i] . "\\b" . "|";
-		$SearchDescriptor = $SearchDescriptor . "Date: " . $ARGV[$i] . ", ";
 		}
 		else {
 			$SearchOthers = $SearchOthers . $ARGV[$i] . "|";
-			$SearchDescriptor = $SearchDescriptor . "Others: " . $ARGV[$i] . ", ";
 		}
 	}
 }
@@ -255,130 +226,65 @@ else {
 	$NO_OTHERS_KEY = 1;
 }
 
-# Examine httpd.conf
-open (HTTP_CONF,"$CONF_PATH/httpd.conf") || die "Couldn't open $CONF_PATH/httpd.conf\n"; 
-while (<HTTP_CONF>) {
-	chop if (/\n/);
-	if (!(/\#/)) {
-	($AdminHeading,$ServerAdmin) = split (/ /) if (/ServerAdmin/) &! (/\#/);
-	($ServerHeading,$WebServer) = split (/ /) if (/ServerName/);
-	($RootHeading,$ServerRoot) = split (/ /) if (/ServerRoot/);
-	($ErrorHeading,$ErrorLog) = split (/ /) if (/ErrorLog/);
-	($TransferHeading,$TransferLog) = split (/ /) if ((/TransferLog/) &! (defined $opt_l));
-	($PidHeading,$PidFile) = split (/ /) if (/ PidFile/);
-	($AccessHeading,$AccessConf) = split (/ /) if (/ AccessConfig/);
-	($SRMHeading,$SRMConf) = split (/ /) if (/ ResourceConfig/);
+
+# Get a snapshot of the existing files in the Web Subtree
+open (WEBROOT,"$HTTPD_CONF") || die "Couldn't open $HTTPD_CONF\n"; 
+while (<WEBROOT>) {
+	if ($_ =~ /^\/:/) {
+		chop;
+		($root,$root_alias) = split (/:/,$_);
+	}
+	elsif ($_ =~ /DocumentRoot/) {
+		chop;
+		($root,$root_alias) = split (/ /,$_);
+	}
+}
+close WEBROOT;
 	
-	}
-}
-
-$ServerRoot = "/usr/local/httpd" if (!(defined $ServerRoot));
-
-if (defined $ErrorLog) {
-	$ErrorLog = "$ServerRoot/$ErrorLog" if ($ErrorLog !~ /^\//);
-}
-else {
-	$ErrorLog = "$ServerRoot/logs/error_log";
-}
-
-if (defined $TransferLog) {
-	$TransferLog = "$ServerRoot/$TransferLog" if (($TransferLog !~ /^\//) &! ($opt_l));
-}
-else {
-	$TransferLog = "$ServerRoot/logs/access_log";
-}
-
-if (defined $PidFile) {
-	$PidFile = "$ServerRoot/$PidFile" if ($PidFile !~ /^\//);
-}
-else {
-	$PidFile = "$ServerRoot/logs/pid.httpd";
-}
-if (defined $AccessConf) {
-	$AccessConf = "$ServerRoot/$AccessConf" if ($AccessConf !~ /^\//);
-}
-else {
-	$AccessConf = "$ServerRoot/conf/access.conf";
-}
-
-if (defined $SRMConf) {
-	$SRMConf = "$ServerRoot/$SRMConf" if ($SRMConf !~ /^\//);
-}
-else {
-	$SRMConf = "$ServerRoot/conf/srm.conf";
-}
-close HTTP_CONF;
-
-#Examine srm.conf
-open (SRM_CONF,"$SRMConf") || die "Couldn't open $SRMConf\n"; 
-while (<SRM_CONF>) {
-chop if (/\n/);
-	if (!(/\#/)) {
-# Define root alias
-	($RootHeading,$DocumentRoot) = split (/ /,$_) if (/DocumentRoot/);
-	($UserHeading,$UserDir) = split (/ /,$_) if (/UserDir/);
-	($IndexHeading,$DirIndex) = split (/ /,$_) if (/DirectoryIndex/);
-	if ((/Redirect/) &! (/\#/)){
-		($RedirectHeading,$LocalFile,$RDFile) = split (/ /);
-		$RDFILES{$LocalFile} = $RDFile;
-	}
- 	if ((/Alias/) &! (/\#/)){
- 		($AliasHeading,$AliasName,$RealName) = split (/ /);
- 		$RealName = "$ServerRoot/$RealName" if ($RealName !~ /^\//);
-		chop ($RealName) if ($RealName =~ /\/$/);
- 		$REALNAME{$AliasName} = $RealName;
-	}
-	
-	}
-}
-
-@AKA = keys(%REALNAME);
-@GO_HTTP = keys(%RDFILES);
-$Output_Path = "$DocumentRoot/$Output_Path" if ($Output_Path !~ /^\//);
-	
-
-if (!($silent)) {
-print "\nName of Server: $WebServer
-Location of Log: $TransferLog
-Output Directory: $Output_Path";
-print "
-Type            Requests for:            Map To:
-=================================================================== 
-Aliases:        /                   ==>  $DocumentRoot
+if ($opt_V) {
+print "Name of Server: $WebServer
+Root of Server: $root_alias
+Location of Log: $WebLOG
+Output Directory: $Output_Path
 ";
-if ($#AKA > -1) {
-for ($i=0;$i <= $#AKA;$i++) {
-printf ("%-16s%-20s==>  %s\n"," ",$AKA[$i],$REALNAME{$AKA[$i]});
+print "Checking existence of files\n";
 }
-}
-if ($#GO_HTTP > -1) {
-printf ("%-16s%-20s==>  %s\n","Redirects:",$GO_HTTP[0],$RDFILES{$GO_HTTP[0]});
-for ($i=1;$i <= $#GO_HTTP;$i++) {
-printf ("%-16s%-20s==>  %s\n"," ",$GO_HTTP[$i],$RDFILES{$GO_HTTP[$i]});
-}
-}
-printf ("%-16s%-20s==>  ~UserName/%s\n","User Directory:","~",$UserDir) if (defined $UserDir);
-print "\n";
+close STDERR if (!($opt_V));
 
-print "\nType of Report(s): ";
-print "Long, " if ($opt_a);
-print "Error, " if ($opt_e);
-print "Summary, " if ($opt_s);
-print "Hosts, " if ($opt_h);
-print "Daily, " if ($opt_d);
-print "Hourly, " if ($opt_t);
-print "Files, " if ($opt_f);
-print "\n";
-if (defined ($SearchDescriptor)) {
-	chop ($SearchDescriptor);
-	print "Search Keys: $SearchDescriptor\n\n";
+open (LS,"ls -sLR $root_alias |") || die "Couldn't get a listing of existing files\n"; 
+$counter = 0;
+while (<LS>){ next if (/^\n/ || /^total/);
+if ($opt_V) {
+        $counter ++;
+
+        if ($counter % 70 != 0) {
+                print STDERR ".";
+        }
+        else {
+                print STDERR " $counter\n";
+                print STDERR ".";
+        }
+}
+
+	if ($_ =~ /^\//) {
+		$_ =~ s/$root_alias//;
+		chop;
+		chop;
+		$path = $subdir . "/";
+		$SIZE{$path} = 0;
+		$subdir = $_;
+		next;
 	}
+	($size,$filename) = split (' ',$_);
+	$path = $subdir . "/" . $filename;
+	$SIZE{$path} = $size;
 }
+close LS;
+open STDERR if (!($opt_V));
+print "\nDone Checking existence of files.\n$counter files exist within your Web Directory Structure.\n" if ($opt_V);
 
-# Set the output buffer to 1
-select ((select(STDOUT),$|=1)[0]);
 
-open (LOG,$TransferLog) || die "Couldn't open log file\n";
+open (LOG,$WebLOG) || die "Couldn't open log file\n";
 
 # Process the information in the log.
 # Set the array information and determine the maximum value for
@@ -392,118 +298,54 @@ open (LOG,$TransferLog) || die "Couldn't open log file\n";
 
 $RECORD_NUMBER = 1;
 $FileMax=1;
+if ($opt_V) {
+print "\n\nProcessing log ...
 
-if (!($silent)) {
-print "Sizing your log ...";
-# Determine the size (lines) of the log file
-        open (WC,"wc -l $TransferLog |") || die "Can't open $TransferLog\n";
+0      10      20      30     40     50      60      70      80      90    100
+|      |       |       |      |      |       |       |       |       |       |
+";
+        open (WC,"wc -l $WebLOG |");
         while (<WC>) {
-                ($LINES) = split (/\//,$_);
+                $LINES = $_;
         }
         close WC;
-	print "$LINES entries \n";
-	$RunTime = sprintf ("%d %s",(($LINES/24)/60),"minutes");
-	$RunTime = sprintf ("%d %s",($RunTime/60),"hours") if ($RunTime >= 60);
-	print "Will take approximately $RunTime to process\n";
-        $counter = 0;
-      	$star_percentage = sprintf ("%.2d",$LINES * .02);
-	
-print "\nProcessing log ...
-(each star represents $star_percentage entries)
-
-0    10   20   30   40   50   60   70   80   90  100%
-|----|----|----|----|----|----|----|----|----|----|
-";
-
+        $line_percentage = sprintf ("%d.0",$LINES/78);
+        $counter = 1;
 }
 
 while (<LOG>) {
-undef ($MODpath);
-undef ($changes);
-if (!($silent)) {
+if ($opt_V) {
         $counter ++;
-	if ($counter % 2) {
-		printf ("%c%s",010,"\\");
-	}
-	else {
-		printf ("%c%s",010,"\/");
-	}
-
-      	$counter_percentage = sprintf ("%.2g",$counter/$LINES);
-        if ($counter_percentage >= .02) {
-		printf ("%c%s",010,"\* ");
-		$stars ++;
+	last if ($counter > $LINES);
+        if ($counter == $line_percentage) {
+                print STDERR "*";
                 $counter = 0;
         }
 }
 
-        ($host,$day,$mon,$date,$time,$year,$cmd,$GETpath) = split (/\s+/,$_);
+        ($host,$day,$mon,$date,$time,$year,$cmd,$path) = split (/\s+/,$_);
         ($hour,$minutes,$seconds) = split (/:/,$time);
 # remove leading [
 	$day = substr($day,1,3);
 # remove trailing [
 	chop $year;
-
 # Try to correct for extraneous characters  in 'GET'.  Remove direct
 # references to the server and strip out double //'s
-	$GETpath =~ s/^$WebServer//;
-	$GETpath =~ s/\/\//\//g;
-	if ($GETpath =~ /^\/$/) {
-		$GETpath = "$DocumentRoot";
-	}
-
-# If the filename is aliased then convert alias to real name.
-foreach $i (0 .. $#AKA) {
-	$GETpath =~ s/$AKA[$i]/$REALNAME{$AKA[$i]}/g;
-}
-
-# If the filename is redirected to another server then convert 
-# to redirect.  The MODpath creates a virtual directory for
-# clarity in the report.
-foreach $i (0 .. $#GO_HTTP) {
-	if ($GETpath =~ /$GO_HTTP[$i]/) {
-		$file_type = "redirect";
-		$GETpath = "/Redirect to $RDFILES{$GO_HTTP[$i]}";
-	}
-}
-
-# If the filename refers to a users' directory then
-# split the path, determine the user's home directory
-# (perl does not understand the '~' as 'home') and
-# reconstruct the path.
-	if ($GETpath =~ /^\~/){
-		($user_name,$remainder) = split (/\//,$GETpath);
-		$user_name =~ s/\~//;
-		$home = (getpwnam($user_name))[7];
-		$GETpath =~ s/\~\w+/$home\/$UserDir/;
-	}
-
-# If it is not an alias, redirect, or user directory then it
-# must be relative to DocumentRoot
-	$GETpath = "$DocumentRoot$GETpath" if ($GETpath !~ /^\//);
-
-	if (($GETpath =~ /\/$/) && ($file_type !~ /redirect/)) {
+	$path =~ s/^$WebServer//;
+	$path =~ s/\/\//\//g;
+	if ($path =~ /\/$/) {
 		$file_type = "directory";
-		$GETpath =~ s/\/+$//;
 	}
 	else {
 		$file_type = "file";
 	}
-
-# If it has had the Server Root prepended to it, then convert
-# it to "ServerRoot" for shorthanding the report.
-
-	$PRINTpath = $GETpath;
-	$PRINTpath =~ s/$ServerRoot/\/ServerRoot/;
-	$PRINTpath =~ s/$DocumentRoot/\/DocumentRoot/;
-
         if ($RECORD_NUMBER eq 1) {
                 $start_date = "$mon $date, $year @ $time";
                 $menu_start_date = "$mon $date";
         }
 # This ridiculously long conditional just tries to do the right thing with
 # possible search key limiters
-if (($NO_KEY) || ($NO_DAY_KEY || ($day =~ /$SearchDay/)) && ($NO_DATE_KEY || ($date =~ /$SearchDate/)) && ($NO_TIME_KEY || ($hour =~ /$SearchTime/)) && ($NO_HOST_KEY || ($host =~ /$SearchHost/)) && ($NO_OTHERS_KEY || ($path =~ (/$SearchOthers/)))) { 
+if (($NO_KEY) || ($NO_DAY_KEY || ($day =~ /$SearchDay/)) && ($NO_DATE_KEY || ($date =~ /$SearchDate/)) && ($NO_TIME_KEY || ($hour =~ /$SearchTime/)) && ($NO_HOST_KEY || ($host =~ /$SearchHost/)) && ($NO_OTHERS_KEY || ($path =~ (/$SearchOthers/) || ($host =~ /$SearchOthers/)))) { 
                 $connections ++;
                 $Connect{$day} ++;
         	  $DayMax = $Connect{$day} if ($Connect{$day} > $DayMax);
@@ -512,68 +354,50 @@ if (($NO_KEY) || ($NO_DAY_KEY || ($day =~ /$SearchDay/)) && ($NO_DATE_KEY || ($d
                 $Machines{$host} ++;
         	  $HostMax = $Machines{$host} if ($Machines{$host} > $HostMax);
 
-# If the size of this file hasn't already been determined then try to get
-# it's size.  If this returns 0, then it doesn't exist and is therefore an 
-# error.
-if ($file_type !~ /redirect/) {
-		if (!(defined ($SIZE{$GETpath}))) {
-			$SIZE{$GETpath} = (-s "$GETpath");
-			if (!(defined $SIZE{$GETpath})) {
-				$EXIST_ERRORS{$GETpath} ++;
-				$EXIST_ERRORS ++;
-				next;
-			}
-			else {
-			$SIZE{$GETpath} = sprintf("%9.0d",$SIZE{$GETpath}/1024);
-			}
+# If this file wasn't seen when trying to get sizes for files then it doesn't
+# exist and is therefore an error.
+		if (!(defined ($SIZE{$path}))) {
+			$EXIST_ERRORS{$path} ++;
+			$EXIST_ERRORS ++;
+			next;
 		}
 		else {
-		$KBYTES{$day} = $KBYTES{$day} + $SIZE{$GETpath};
+		$KBYTES{$day} = $KBYTES{$day} + $SIZE{$path};
         	  $SizeDayMax = $KBYTES{$day} if ($KBYTES{$day} > $SizeDayMax);
-		$KBYTES{$hour} = $KBYTES{$hour} + $SIZE{$GETpath};
+		$KBYTES{$hour} = $KBYTES{$hour} + $SIZE{$path};
         	  $SizeHourMax = $KBYTES{$hour} if ($KBYTES{$hour} > $SizeHourMax);
 		}
 
 # Get subtotals for each directory in the path name of the file
-# This is strictly for the report breakdown.
-		undef ($ParentDir);
-        	@Tree = split (/\//,$PRINTpath);
+		$ParentDir = '';
+        	@Tree = split (/\//,$path);
 		for ($i=1;$i < $#Tree;$i++) {
+			next if $Tree[$i] !~ /[a-zA-Z0-9\-]+/;
 			$ParentDir = $ParentDir . "/" . $Tree[$i];
 			$Directory{$ParentDir} ++;
-			$KBYTES{$ParentDir} = $KBYTES{$ParentDir} + $SIZE{$GETpath};
+			$KBYTES{$ParentDir} = $KBYTES{$ParentDir} + $SIZE{$path};
 		}
  		if ($file_type =~ /file/) {
-			$TOTAL_KBYTES = $TOTAL_KBYTES + $SIZE{$GETpath};
-			$KBYTES{$GETpath} = $KBYTES{$GETpath} + $SIZE{$GETpath};
+		$TOTAL_KBYTES = $TOTAL_KBYTES + $SIZE{$path};
+		$KBYTES{$path} = $KBYTES{$path} + $SIZE{$path};
                         $FILE_ACCESSES ++;
-                        $Directory{$GETpath} ++;
+                        $Directory{$path} ++;
+                        #$FileMax = $Directory{$path} if ($Directory{$path} > $FileMax);
                  }
 
                  if ($file_type =~ /directory/) {
                          $DIRECTORY_ACCESSES ++;
-                         $Directory{$GETpath} ++;
+			 chop $path;
+                         $Directory{$path} ++;
+                        #$FileMax = $Directory{$path} if ($Directory{$path} > $FileMax);
                  }
-}
-else {
-			$REDIRECTS ++;
-			$KBYTES{$GETpath} = "N/A";
-                        $Directory{$GETpath} ++;
-}
+
 
 $RECORD_NUMBER ++;
 }
 }
-
 close LOG;
-
-# This just finishes the thermometer if the
-# fractional percentage does not allow printing
-# of the last star.
-if (!($silent) && ($stars < 51)){
-	printf ("%c%s",010,"\*");
-}
-print "\n\n" if (!($silent));
+print "\n" if ($opt_V);
 
 
 # Set the end date variable to that of the last entry in the log.
@@ -585,14 +409,12 @@ $OutFile_Prefix = "$Output_Path/$date$mon$year";
 
 # HyperLink path for files
 $HyperLink_tmp = $OutFile_Prefix;
-$HyperLink_tmp =~ s/$DocumentRoot//;
-#$HyperLink_tmp =~ s/(.*) (\.+\/) ($UserDir)/\~\2\/\3/;
-$HyperLink_tmp =~ s/(\w*\W*) (\w+\/)($UserDir)/\~\2\/\3/;
+$HyperLink_tmp =~ s/$root_alias//;
 $HyperLink_Prefix = "http://$WebServer$HyperLink_tmp";
 
 # HyperLink path for Menu Document
 $MenuLink = $MenuDoc;
-$MenuLink =~ s/$DocumentRoot//;
+$MenuLink =~ s/$root_alias//;
 $MenuDocLink = "http://$WebServer$MenuLink";
 
 # This number represents either the number of subdirectory levels to report
@@ -604,11 +426,9 @@ else {
 	$verbosity_limit = 100;
 }
 
-# Summary report
 if ($opt_s) {
 	$OutFile = $OutFile_Prefix . ".sum";
-	$OutFile = $OutFile . ".html" if ($opt_H);
-	print "Writing: $OutFile\n" if (!($silent));
+	print STDERR "Writing: $OutFile\n";
 	&PRINT_HEADING;
 	open (OUTPUT,">> $OutFile") || die "Can't create $OutFile\n";
 	if ($opt_H) {
@@ -620,67 +440,55 @@ Access Report Summary
 </pre>";
 	}
 	close OUTPUT;
-	&DO_DAILY(summary);
-	&DO_HOURLY(summary);
+	&DO_DAILY;
+	&DO_HOURLY;
 	&DO_FILES(summary);
 }
 
 
-# Error Report
 if ($opt_e) {
-	$OutFile = $OutFile_Prefix . ".error";
-	$OutFile = $OutFile . ".html" if ($opt_H);
-	print "Writing: $OutFile\n" if (!($silent));
-	&DO_ERRORS;
+$OutFile = $OutFile_Prefix . ".error";
+print STDERR "Writing: $OutFile\n";
+&DO_ERRORS;
 }
 
-# File Report
 if ($opt_f) {
-	$OutFile = $OutFile_Prefix . ".files";
-	$OutFile = $OutFile . ".html" if ($opt_H);
-	print "Writing: $OutFile\n" if (!($silent));
-	&DO_FILES(no_summary);
+$OutFile = $OutFile_Prefix . ".files";
+print STDERR "Writing: $OutFile\n";
+&DO_FILES(no_summary);
 }
 
-# Host Report
 if ($opt_h) {
-	$OutFile = $OutFile_Prefix . ".hosts";
-	$OutFile = $OutFile . ".html" if ($opt_H);
-	print "Writing: $OutFile\n" if (!($silent));
-	&DO_HOSTS(no_summary);
+$OutFile = $OutFile_Prefix . ".hosts";
+print STDERR "Writing: $OutFile\n";
+&DO_HOSTS;
 }
 
-# Daily Report
 if ($opt_d) {
-	$OutFile = $OutFile_Prefix . ".daily";
-	$OutFile = $OutFile . ".html" if ($opt_H);
-	print "Writing: $OutFile\n" if (!($silent));
-	&DO_DAILY(no_summary);
+$OutFile = $OutFile_Prefix . ".daily";
+print STDERR "Writing: $OutFile\n";
+&DO_DAILY;
 }
 
-# Time Report
 if ($opt_t) {
-	$OutFile = $OutFile_Prefix . ".hourly";
-	$OutFile = $OutFile . ".html" if ($opt_H);
-	print "Writing: $OutFile\n" if (!($silent));
-	&DO_HOURLY(no_summary);
+$OutFile = $OutFile_Prefix . ".hourly";
+print STDERR "Writing: $OutFile\n";
+&DO_HOURLY;
 }
 
-# All
 if ($opt_a) {
 	$OutFile = $OutFile_Prefix . ".long";
-	$OutFile = $OutFile . ".html" if ($opt_H);
-	print "Writing: $OutFile\n" if (!($silent));
+print STDERR "Writing: $OutFile\n";
 	&PRINT_HEADING;
-	&DO_DAILY(no_summary);
-	&DO_HOURLY(no_summary);
-	&DO_HOSTS(no_summary);
-	&DO_FILES(no_summary);
+	&DO_DAILY;
+	&DO_HOURLY;
+	&DO_HOSTS;
+	&DO_FILES;
 }
 
 
 
-if ($opt_H) {
+if ($opt_M) {
 	if (!(-e "$MenuDoc")) {
 	open (MENU_WRITE,"> $MenuDoc")|| die "Can't create Menu Document\n";
 print MENU_WRITE "<TITLE>W3 Server Report Menu</TITLE>
@@ -701,13 +509,13 @@ while (<MENU_READ>) {
 	if (/\<UL\>/) {
 print MENU_WRITE "$_\n";
 print MENU_WRITE " <LI>$menu_start_date to $menu_end_date: ";
-print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.sum.html\">Summary</A>/" if ($opt_s);
-print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.files.html\">File Accesses</A>/" if ($opt_f);
-print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.hosts.html\">Host Accesses</A>/" if ($opt_h);
-print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.error.html\">Errors</A>/" if ($opt_e);
-print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.daily.html\">Daily Accesses</A>/" if ($opt_d);
-print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.hourly.html\">Hourly Accesses</A>/" if ($opt_t);
-print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.long.html\">Full Report</A>/" if ($opt_a);
+print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.sum\">Summary</A>/" if ($opt_s);
+print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.files\">File Accesses</A>/" if ($opt_f);
+print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.hosts\">Host Accesses</A>/" if ($opt_h);
+print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.error\">Errors</A>/" if ($opt_e);
+print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.daily\">Daily Accesses</A>/" if ($opt_d);
+print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.hourly\">Hourly Accesses</A>/" if ($opt_t);
+print MENU_WRITE "<A HREF=\"$HyperLink_Prefix.long\">Full Report</A>/" if ($opt_a);
 print MENU_WRITE "\n";
 	}
 	else {
@@ -721,9 +529,15 @@ chmod (0644,$MenuDoc);
 }
 
 sub DO_ERRORS {
-	open (OUTPUT,"> $OutFile") || die "Can't create $OutFile\n";
-	$TITLE = "Missing File Report";
-	&HYPER_LINK(error) if ($opt_H);
+open (OUTPUT,"> $OutFile") || die "Can't create $OutFile\n";
+if ($opt_H) {
+print OUTPUT " <pre>
+<TITLE>Missing File Report</TITLE>
+<H1>Missing File Report</H1>
+See Also: <A HREF=\"$MenuDocLink\">Report Menu</A> / <A HREF=\"$HyperLink_Prefix.sum\">Summary</A> / <A HREF=\"$HyperLink_Prefix.files\">File Accesses</A> / <A HREF=\"$HyperLink_Prefix.hosts\">Host Accesses</A>;
+
+";
+}
 
 print OUTPUT "==================================================================\n";
 print OUTPUT "			Web Error History\n";
@@ -772,6 +586,11 @@ printf OUTPUT "</pre>\n" if ($opt_H);
 close OUTPUT;
 }
 
+
+
+
+
+
 sub DO_DAILY {
 # Set an array to convert 3 letter weekday abbreviations to full names.
 @weekdays = ('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday');
@@ -780,19 +599,16 @@ $SubTotal=0;
 # Print the connections/weekday data
 print OUTPUT "\n";
 print OUTPUT "<H1>\n" if ($opt_H);
-$TITLE =  "Connections & Byte Count Per Week Day\n";
-print OUTPUT $TITLE if (!($opt_H));
+print OUTPUT "Connections & Byte Count Per Week Day\n";
 print OUTPUT "</H1>\n" if ($opt_H);
-#$TITLE = "Daily Report";
-$arg = pop(@_);
-if ($arg =~ /^summary$/) {
-	&HYPER_LINK(daily_sum) if ($opt_H);
-}
-else {
-	&HYPER_LINK(daily) if ($opt_H);
+if ($opt_H) {
+print OUTPUT "<pre>
+See Also: <A HREF=\"$MenuDocLink\">Report Menu</A>/<A HREF=\"$HyperLink_Prefix.files\">File Access Report</A>/<A HREF=\"$HyperLink_Prefix.hosts\">Host Accesses</A>/<A HREF=\"$HyperLink_Prefix.error\">Errors</A>
+
+";
 }
 
-        printf OUTPUT ("%-17s%-30s\n%s\n"," Day","Results ( . -> Connections, * -> Kbytes )","---------------------------------------------------------------------");
+        printf OUTPUT ("%-12s%-30s\n%s\n"," Day","Connections","---------------------------------------------------------------------");
 
 # Print the output for each record.
 
@@ -816,7 +632,7 @@ $index = substr($heading,0,3);
 	}
 # Print them.
 	if (($index =~ /$SearchDay/) || $NO_DAY_KEY) {
-       	 printf OUTPUT ("%-15s%9s %s\n%-15s%9s %s\n",$heading,$Connect{$index},$Access_graph,"        ",$KBYTES{$index},$Size_graph);
+       	 printf OUTPUT ("%-15s%9s %s\n%-15s%9s %s\n",$heading,$Connect{$index},$Access_graph,"  Kbytes",$KBYTES{$index},$Size_graph);
 	$SubTotal = $SubTotal + $Connect{$index};
 	}
 }
@@ -834,19 +650,15 @@ $SubTotal=0;
 @Hours = ('00','01','02','03','04','05','06','07','08','09',10 .. 23);
 print OUTPUT "\n";
 print OUTPUT "<H1>\n" if ($opt_H);
-$TITLE =  "Connections  & Byte Count Per Hour\n";
-print OUTPUT $TITLE if (!($opt_H));
+print OUTPUT "Connections  & Byte Count Per Hour\n";
 print OUTPUT "</H1>\n" if ($opt_H);
-#$TITLE = "Hourly Report";
-$arg = pop(@_);
-if ($arg =~ /^summary$/) {
-	&HYPER_LINK(hourly_sum) if ($opt_H);
-}
-else {
-	&HYPER_LINK(hourly) if ($opt_H);
-}
+if ($opt_H) {
+print OUTPUT "<pre>
+See Also: <A HREF=\"$MenuDocLink\">Report Menu</A>/<A HREF=\"$HyperLink_Prefix.files\">File Access Report</A>/<A HREF=\"$HyperLink_Prefix.hosts\">Host Accesses</A>/<A HREF=\"$HyperLink_Prefix.error\">Errors</A>
 
-        printf OUTPUT ("%-17s%-30s\n%s\n"," Hour","Results ( . -> Connections, * -> Kbytes )","---------------------------------------------------------------------");
+";
+}
+        printf OUTPUT ("%-12s%-30s\n%s\n"," Hour","Connections","---------------------------------------------------------------------");
 foreach $heading (@Hours) {
         if ($HourMax > 0 ){
         $Access_graph = '.' x ($Connect{$heading} / $HourMax * 50);
@@ -866,11 +678,11 @@ foreach $heading (@Hours) {
 	$SubTotal = $SubTotal + $Connect{$heading};
 # Change the heading to read 'Midnight' if appropriate
         if ($heading == '00') {
-       	 	printf OUTPUT ("%-15s%9s %s\n%-15s%9s %s\n","Midnight",$Connect{$heading},$Access_graph,"        ",$KBYTES{$heading},$Size_graph);
+       	 	printf OUTPUT ("%-15s%9s %s\n%-15s%9s %s\n","Midnight",$Connect{$heading},$Access_graph,"  Kbytes",$KBYTES{$heading},$Size_graph);
         }
 # Change the heading to read 'Noon' if appropriate
        elsif ($heading == '12') {
-       	 	printf OUTPUT ("%-15s%9s %s\n%-15s%9s %s\n","Noon",$Connect{$heading},$Access_graph,"        ",$KBYTES{$heading},$Size_graph);
+       	 	printf OUTPUT ("%-15s%9s %s\n%-15s%9s %s\n","Noon",$Connect{$heading},$Access_graph,"  Kbytes",$KBYTES{$heading},$Size_graph);
         }
 # Else just print the hour by number.
         else {
@@ -882,7 +694,7 @@ foreach $heading (@Hours) {
 			$modifier = "PM"; 
 			$print_heading = $heading - 12;
 		}
-       	 	printf OUTPUT ("%3s %-11s%9s %s\n%-15s%9s %s\n",$print_heading,$modifier,$Connect{$heading},$Access_graph,"        ",$KBYTES{$heading},$Size_graph);
+       	 	printf OUTPUT ("%3s %-11s%9s %s\n%-15s%9s %s\n",$print_heading,$modifier,$Connect{$heading},$Access_graph,"  Kbytes",$KBYTES{$heading},$Size_graph);
         }
 }
 }
@@ -893,26 +705,32 @@ close OUTPUT;
 }
 
 sub DO_FILES {
+$arg = pop(@_);
 open (OUTPUT,">> $OutFile") || die "Can't create $OutFile\n";
 print OUTPUT "\n";
 print OUTPUT "<H1>\n" if ($opt_H);
-$arg = pop(@_);
-$local_verbosity = $verbosity_limit;
-if (($arg =~ /^summary$/) || defined ($opt_v)){
-	$TITLE = "Abbreviated Access Report for Directories and Files\n";
-	print OUTPUT $TITLE if (!($opt_H));
-	$local_verbosity = 2 if (!(defined ($opt_v)));
+if (($arg =~ /summary/) || defined ($opt_v)){
+print OUTPUT "Abbreviated Access Report for Directories and Files\n";
 }
 else {
-	$TITLE = "Access Report for Directories and Files\n";
-print OUTPUT $TITLE if (!($opt_H));
+print OUTPUT "Access Report for Directories and Files\n" if ($arg =~ /summary/);
 }
-
 print OUTPUT "</H1>\n" if ($opt_H);
-#$TITLE = "File Access Report";
-&HYPER_LINK(file_sum) if (($opt_H) && ($arg =~ /^summary$/));
-&HYPER_LINK(file) if (($opt_H) && ($arg =~ /^no_summary$/));
+if ($opt_H) {
+ 	if ($arg =~ /summary/) {
+print OUTPUT "<pre>
+ See Also: <A HREF=\"$MenuDocLink\">Report Menu</A> / <A HREF=\"$HyperLink_Prefix.files\">Complete File Access Report</A> / <A HREF=\"$HyperLink_Prefix.hosts\">Host Accesses</A> / <A HREF=\"$HyperLink_Prefix.error\">Errors</A>
 
+";
+	}
+	else {
+print OUTPUT "<pre>
+<TITLE>File Access Report</TITLE>
+See Also: <A HREF=\"$MenuDocLink\">Report Menu</A> / <A HREF=\"$HyperLink_Prefix.sum\">Summary</A> / <A HREF=\"$HyperLink_Prefix.hosts\">Host Accesses</A> / <A HREF=\"$HyperLink_Prefix.error\">Errors</A>
+
+";
+	}
+}
 $SubTotal=0;
 print OUTPUT "\n";
 printf OUTPUT ("%s%32s       %s\n%s\n","Directory or File Accessed","Files","Kb","-------------------------------------------------------------------------");
@@ -923,9 +741,6 @@ printf OUTPUT ("%s%32s       %s\n%s\n","Directory or File Accessed","Files","Kb"
 @sortedDIRS = sort @DIRS;
 
 foreach $heading (@sortedDIRS) {
-#@previous_heading = "";
-$PrintHeading = "";
-$subdir = "";
 $StringLength = 0;
 
 # Create an array consisting of the names in the full path without
@@ -933,6 +748,7 @@ $StringLength = 0;
         @heading_format = split (/\//,$heading);
 	
 $PRINT_ME = 1;
+#$PRINT_ME = 1 if ($heading =~ /$SearchOthers/);
 
 # Iterate through this list of file names that defines the path.  For each
 # name in this path that is the same as the path of the previously printed 
@@ -940,36 +756,38 @@ $PRINT_ME = 1;
 # This is all to prevent the duplication of full pathnames in the output 
 # to make it more readable.
 
-for ($i=1;$i <= $#heading_format;$i++) {
-	$subdir = $subdir . "/" . $heading_format[$i];
-	if ($heading_format[$i] eq $previous_heading[$i]) {
-		$PrintHeading = "." . $PrintHeading;
-	}
-	else {
-		$PrintHeading = $PrintHeading . $heading_format[$i];
+        for ($i=1;$i < $#heading_format;$i++) {
+                if ($heading_format[$i] eq $previous_heading[$i]) {
+                        $heading_format[$i] = ".";
+                }
+        }
 
-		$StringLength = length ($PrintHeading);
-		#if ($StringLength > 50){
-		#   $PrintHeading = substr ($PrintHeading,0,(47 - $i)) . "...";
-		#   $StringLength = 50;
-		#}
+	$StringLength = length ($heading_format[$i]) + $i;
+	if ($StringLength > 50){
+		$heading_format[$i] = substr ($heading_format[$i],0,(47 - $i)) . "...";
+		$StringLength = 50;
+	}
 
 # Insert a line of tildes from the filename to it's data to make viewing easier.
-$Spaces = "~" x (57 - ($StringLength + length ($Directory{$subdir})));
-$PrintHeading = "$PrintHeading $Spaces ";
+$Spaces = "~" x (57 - ($StringLength + length ($Directory{$heading})));
+$heading_format[$i] = "$heading_format[$i] $Spaces ";
+
+# If this is the root menu then label it as such.
+        if ($heading eq "") {
+                @heading_format = "Main_Menu ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ";
+        }
+
+# Set the printed array element delimiter to null
+$" = "";
 
 # Print it.
-		if ($i <= $local_verbosity) {
-#print STDERR "$subdir\n";
-			if ($PRINT_ME || $NO_OTHERS_KEY) {
-			   $SubTotal = $SubTotal + $Directory{$subdir};
-			   $KBYTES{$subdir} = ">1" if $KBYTES{$subdir} == 0;
-         		    printf OUTPUT ("%s%s%9s Kb\n","$PrintHeading",$Directory{$subdir},$KBYTES{$subdir});
-			}
-		}
-$PrintHeading = "." x $i;
+if ($i <= $verbosity_limit) {
+	if ($PRINT_ME || $NO_OTHERS_KEY) {
+	$SubTotal = $SubTotal + $Directory{$heading};
+        printf OUTPUT ("%s%s%9s Kb\n","@heading_format",$Directory{$heading},$KBYTES{$heading});
 	}
 }
+
 # Set this to be the previously printed filename.
         @previous_heading = split (/\//,$heading);
 	$PRINT_ME = 0;
@@ -983,18 +801,15 @@ close OUTPUT;
 sub DO_HOSTS {
 open (OUTPUT,">> $OutFile") || die "Can't create $OutFile\n";
 print OUTPUT "<H1>\n" if ($opt_H);
-$TITLE = "Connections per Host\n";
-print OUTPUT $TITLE if (!($opt_H));
+print OUTPUT "Connections per Host\n";
 print OUTPUT "</H1>\n" if ($opt_H);
-#$TITLE = "Host Access Report";
-$arg = pop(@_);
-if ($arg =~ /^summary$/) {
-	&HYPER_LINK(hosts_sum) if ($opt_H);
-}
-else {
-	&HYPER_LINK(hosts) if ($opt_H);
-}
+if ($opt_H) {
+print OUTPUT "<pre>
+<TITLE>Host Access Report</TITLE>
+See Also: <A HREF=\"$MenuDocLink\">Report Menu</A> / <A HREF=\"$HyperLink_Prefix.sum\">Access Report Summary</A> / <A HREF=\"$HyperLink_Prefix.files\">File Accesses</A> / <A HREF=\"$HyperLink_Prefix.error\">Errors</A>
 
+";
+}
 $SubTotal=0;
 
 # Print the name of each host and the number of time they connected.
@@ -1034,27 +849,7 @@ printf OUTPUT ("%-40s%8s\n","Total Number of Connections:",$connections);
 printf OUTPUT ("%-40s%8s\n","Total Number of KiloBytes Retrieved:",$TOTAL_KBYTES);
 printf OUTPUT ("%-40s%8s\n","Total Number of Directories Browsed:",$DIRECTORY_ACCESSES);
 printf OUTPUT ("%-40s%8s\n","Total Number of Nonexistent Files:",$EXIST_ERRORS);
-printf OUTPUT ("%-40s%8s\n","Total Number of Redirected Accesses:",$REDIRECTS);
 print OUTPUT "\n";
 close OUTPUT;
 chmod 0644,$OutFile;
-}
-
-sub HYPER_LINK {
-$THIS_ENTRY = pop(@_);
-print OUTPUT " <pre>\n";
-if (!(@_ =~ /summary/)) {
-print OUTPUT "<TITLE>$TITLE</TITLE>
-<H1>$TITLE</H1>
-";
-}
-print OUTPUT "See Also: <A HREF=\"$MenuDocLink\">Report Menu</A> / ";
-print OUTPUT "<A HREF=\"$HyperLink_Prefix.long.html\">Full Report</A> /" if (($opt_a) && ($THIS_ENTRY !~ /long/));
-print OUTPUT "<A HREF=\"$HyperLink_Prefix.error.html\">Error Report</A> /" if (($opt_e) && ($THIS_ENTRY !~ /error/));
-print OUTPUT "<A HREF=\"$HyperLink_Prefix.sum.html\">Summary</A> /" if (($opt_s) && ($THIS_ENTRY !~ /sum/));
-print OUTPUT "<A HREF=\"$HyperLink_Prefix.files.html\">Detailed File Accesses</A> /" if (($opt_f)  && ($THIS_ENTRY !~ /^file$/)); 
-print OUTPUT "<A HREF=\"$HyperLink_Prefix.daily.html\">Daily Accesses</A> /" if (($opt_d) && ($THIS_ENTRY !~ /daily/));
-print OUTPUT "<A HREF=\"$HyperLink_Prefix.hourly.html\">Hourly Accesses</A> /" if (($opt_t)&& ($THIS_ENTRY !~ /hourly/));
-print OUTPUT "<A HREF=\"$HyperLink_Prefix.hosts.html\">Host Accesses</A>" if (($opt_h)&& ($THIS_ENTRY !~ /hosts/));
-print OUTPUT "\n";
 }

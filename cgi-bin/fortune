@@ -1,6 +1,6 @@
 #!/bin/sh
 
-FORTUNE=`which fortune`
+FORTUNE=/usr/games/fortune
 
 echo Content-type: text/plain
 echo

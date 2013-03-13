@@ -1,5 +1,5 @@
 /*
- * http_put.c: Handles PUT
+ * http_post.c: Handles POST
  * 
  * Rob McCool
  * 
@@ -7,13 +7,13 @@
 
 #include "httpd.h"
 
-void handle_put(char *name, char *args, int in, FILE *out) {
+void handle_post(char *name, char *args, int in, FILE *out) {
     struct stat finfo;
     char ct_bak[MAX_STRING_LEN];
 
     strcpy(ct_bak,content_type); /* oop ack */
     if(stat(name,&finfo) == -1) {
-        if(find_script("PUT",name,args,in,out))
+        if(find_script("POST",name,args,in,out))
             return;
         if(errno==ENOENT) {
             log_reason("file does not exist",name);
@@ -29,16 +29,16 @@ void handle_put(char *name, char *args, int in, FILE *out) {
     probe_content_type(name);
     if(!strcmp(content_type,CGI_MAGIC_TYPE)) {
         strcpy(content_type,ct_bak);
-        send_cgi("PUT",name,"",args,&finfo,in,out);
+        send_cgi("POST",name,"",args,&finfo,in,out);
         return;
     }
     /* Not a script, do group ann thang */
-    die(NOT_IMPLEMENTED,"PUT to non-script",out);
+    die(NOT_IMPLEMENTED,"POST to non-script",out);
 }
 
 
 
-void put_node(char *name, char *args, int in, FILE *out) {
+void post_node(char *name, char *args, int in, FILE *out) {
     struct stat finfo;
     int s;
 
@@ -46,13 +46,14 @@ void put_node(char *name, char *args, int in, FILE *out) {
 
     switch(s) {
       case STD_DOCUMENT:
-        handle_put(name,args,in,out);
+        handle_post(name,args,in,out);
         return;
       case REDIRECT_URL:
         die(REDIRECT,name,out);
+      case SCRIPT_NCSA:
+        exec_post_NCSA(name,args,in,out);
+        return;
       case SCRIPT_CGI:
-        exec_cgi_script("PUT",name,args,in,out);
-      default:
-        die(NOT_IMPLEMENTED,"NCSA script exeuction of delete",out);
+        exec_cgi_script("POST",name,args,in,out);
     }
 }

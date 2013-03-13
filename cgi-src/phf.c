@@ -178,11 +178,17 @@ main(int argc, char *argv[]) {
         strcpy(commandstr, "/usr/local/bin/ph -m ");
         if (strlen(serverstr)) {
            strcat(commandstr, " -s ");
+           /* RM 2/22/94 oops */
+           escape_shell_cmd(serverstr);
            strcat(commandstr, serverstr);
            strcat(commandstr, " ");
            }
+        escape_shell_cmd(typestr);
         strcat(commandstr, typestr);
-        if (atleastonereturn) strcat(commandstr, returnstr);
+        if (atleastonereturn) {
+           escape_shell_cmd(returnstr);
+           strcat(commandstr, returnstr);
+        }
 
         printf("%s%c", commandstr, LF);
         printf("<PRE>%c", LF);

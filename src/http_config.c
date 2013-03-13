@@ -35,7 +35,7 @@ char auth_pgp_encrypt[MAX_STRING_LEN];
 char auth_pgp_entity[MAX_STRING_LEN];
 #endif
 
-void process_server_config() {
+void process_server_config(FILE *errors) {
     FILE *cfg;
     char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
     int n=0;
@@ -67,7 +67,7 @@ void process_server_config() {
 #endif
 
     if(!(cfg = fopen(server_confname,"r"))) {
-        fprintf(stderr,"httpd: could not open server config. file %s\n",server_confname);
+        fprintf(errors,"httpd: could not open server config. file %s\n",server_confname);
         perror("fopen");
         exit(1);
     }
@@ -81,8 +81,8 @@ void process_server_config() {
                 if(!strcasecmp(l,"inetd")) standalone=0;
                 else if(!strcasecmp(l,"standalone")) standalone=1;
                 else {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,server_confname);
-                    fprintf(stderr,"ServerType is either inetd or standalone.\n");
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,server_confname);
+                    fprintf(errors,"ServerType is either inetd or standalone.\n");
                     exit(1);
                 }
             }
@@ -107,13 +107,13 @@ void process_server_config() {
                 if(server_hostname)
                     free(server_hostname);
                 if(!(server_hostname = strdup(w)))
-                    die(NO_MEMORY,"process_resource_config",stderr);
+                    die(NO_MEMORY,"process_resource_config",errors);
             }
             else if(!strcasecmp(w,"ServerRoot")) {
                 cfg_getword(w,l);
                 if(!is_directory(w)) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,server_confname);
-                    fprintf(stderr,"%s is not a valid directory.\n",w);
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,server_confname);
+                    fprintf(errors,"%s is not a valid directory.\n",w);
                     exit(1);
                 }
                 strcpy(server_root,w);
@@ -170,9 +170,9 @@ void process_server_config() {
                 else if(!strcmp(w,"off"))
                     do_rfc931 = 0;
                 else {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,"IdentityCheck must be on or off.\n");
+                    fprintf(errors,"IdentityCheck must be on or off.\n");
                 }
             }
 #ifdef PEM_AUTH
@@ -202,8 +202,8 @@ void process_server_config() {
             }
 #endif
             else {
-                fprintf(stderr,"Syntax error on line %d of %s:\n",n,server_confname);
-                fprintf(stderr,"Unknown keyword %s.\n",w);
+                fprintf(errors,"Syntax error on line %d of %s:\n",n,server_confname);
+                fprintf(errors,"Unknown keyword %s.\n",w);
                 exit(1);
             }
         }
@@ -218,10 +218,8 @@ char access_name[MAX_STRING_LEN];
 char document_root[MAX_STRING_LEN];
 char default_type[MAX_STRING_LEN];
 char default_icon[MAX_STRING_LEN];
-int fancy_indexing;
-char readme_fname[MAX_STRING_LEN];
 
-void process_resource_config() {
+void process_resource_config(FILE *errors) {
     FILE *cfg;
     char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
     int n=0;
@@ -232,11 +230,11 @@ void process_resource_config() {
     strcpy(document_root,DOCUMENT_LOCATION);
     strcpy(default_type,DEFAULT_TYPE);
     default_icon[0] = '\0';
-    fancy_indexing = DEFAULT_INDEXING;
-    readme_fname[0] = '\0';
+
+    add_opts_int(0,"/",errors);
 
     if(!(cfg = fopen(srm_confname,"r"))) {
-        fprintf(stderr,"httpd: could not open document config. file %s\n",
+        fprintf(errors,"httpd: could not open document config. file %s\n",
                 srm_confname);
         perror("fopen");
         exit(1);
@@ -253,9 +251,9 @@ void process_resource_config() {
                 cfg_getword(w,l);
                 cfg_getword(w2,l);
                 if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,
+                    fprintf(errors,
 "ScriptAlias must be followed by a fakename, one space, then a realname.\n");
                     exit(1);
                 }                
@@ -267,9 +265,9 @@ void process_resource_config() {
                 cfg_getword(w,l);
                 cfg_getword(w2,l);
                 if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,
+                    fprintf(errors,
 "ScriptAlias must be followed by a fakename, one space, then a realname.\n");
                     exit(1);
                 }                
@@ -297,9 +295,9 @@ void process_resource_config() {
             else if(!strcasecmp(w,"DocumentRoot")) {
                 cfg_getword(w,l);
                 if(!is_directory(w)) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,"%s is not a valid directory.\n",w);
+                    fprintf(errors,"%s is not a valid directory.\n",w);
                     exit(1);
                 }
                 strcpy(document_root,w);
@@ -310,9 +308,9 @@ void process_resource_config() {
                 cfg_getword(w,l);
                 cfg_getword(w2,l);
                 if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,
+                    fprintf(errors,
 "Alias must be followed by a fakename, one space, then a realname.\n");
                     exit(1);
                 }                
@@ -323,35 +321,35 @@ void process_resource_config() {
                 cfg_getword(w,l);
                 cfg_getword(w2,l);
                 if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,
+                    fprintf(errors,
 "AddType must be followed by a type, one space, then a file or extension.\n");
                     exit(1);
                 }
-                add_type(w2,w,stderr);
+                add_type(w2,w,errors);
             }
             else if(!strcasecmp(w,"AddEncoding")) {
                 char w2[MAX_STRING_LEN];
                 cfg_getword(w,l);
                 cfg_getword(w2,l);
                 if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,
+                    fprintf(errors,
 "AddEncoding must be followed by a type, one space, then a file or extension.\n");
                     exit(1);
                 }
-                add_encoding(w2,w,stderr);
+                add_encoding(w2,w,errors);
             }
             else if(!strcasecmp(w,"Redirect")) {
                 char w2[MAX_STRING_LEN];
                 cfg_getword(w,l);
                 cfg_getword(w2,l);
                 if((w[0] == '\0') || (w2[0] == '\0') || (!is_url(w2))) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,
+                    fprintf(errors,
 "Redirect must be followed by a document, one space, then a URL.\n");
                     exit(1);
                 }
@@ -360,13 +358,13 @@ void process_resource_config() {
             else if(!strcasecmp(w,"FancyIndexing")) {
                 cfg_getword(w,l);
                 if(!strcmp(w,"on"))
-                    fancy_indexing = 1;
+                    add_opts_int(FANCY_INDEXING,"/",errors);
                 else if(!strcmp(w,"off"))
-                    fancy_indexing = 0;
+                    add_opts_int(0,"/",errors);
                 else {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-                    fprintf(stderr,"FancyIndexing must be on or off.\n");
+                    fprintf(errors,"FancyIndexing must be on or off.\n");
                     exit(1);
                 }
             }
@@ -374,21 +372,21 @@ void process_resource_config() {
                 char desc[MAX_STRING_LEN];
                 int fq;
                 if((fq = ind(l,'\"')) == -1) {
-                    fprintf(stderr,"Syntax error on line %d of %s:\n",n,
+                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
                             srm_confname);
-fprintf(stderr,"AddDescription must have quotes around the description.\n");
+fprintf(errors,"AddDescription must have quotes around the description.\n");
                     exit(1);
                 }
                 else {
                     getword(desc,&l[++fq],'\"');
                     cfg_getword(w,&l[fq]);
-                    add_desc(desc,w,stderr);
+                    add_desc(BY_PATH,desc,w,"/",errors);
                 }
             }
             else if(!strcasecmp(w,"IndexIgnore")) {
                 while(l[0]) {
                     cfg_getword(w,l);
-                    add_ignore(w,stderr);
+                    add_ignore(w,"/",errors);
                 }
             }
             else if(!strcasecmp(w,"AddIcon")) {
@@ -396,7 +394,47 @@ fprintf(stderr,"AddDescription must have quotes around the description.\n");
                 cfg_getword(w2,l);
                 while(l[0]) {
                     cfg_getword(w,l);
-                    add_icon(w2,w,stderr);
+                    add_icon(BY_PATH,w2,w,"/",errors);
+                }
+            }
+            else if(!strcasecmp(w,"AddIconByType")) {
+                char w2[MAX_STRING_LEN];
+                cfg_getword(w2,l);
+                while(l[0]) {
+                    cfg_getword(w,l);
+                    add_icon(BY_TYPE,w2,w,"/",errors);
+                }
+            }
+            else if(!strcasecmp(w,"AddIconByEncoding")) {
+                char w2[MAX_STRING_LEN];
+                cfg_getword(w2,l);
+                while(l[0]) {
+                    cfg_getword(w,l);
+                    add_icon(BY_ENCODING,w2,w,"/",errors);
+                }
+            }
+            else if(!strcasecmp(w,"AddAlt")) {
+                char w2[MAX_STRING_LEN];
+                cfg_getword(w2,l);
+                while(l[0]) {
+                    cfg_getword(w,l);
+                    add_alt(BY_PATH,w2,w,"/",errors);
+                }
+            }
+            else if(!strcasecmp(w,"AddAltByType")) {
+                char w2[MAX_STRING_LEN];
+                cfg_getword(w2,l);
+                while(l[0]) {
+                    cfg_getword(w,l);
+                    add_alt(BY_TYPE,w2,w,"/",errors);
+                }
+            }
+            else if(!strcasecmp(w,"AddAltByEncoding")) {
+                char w2[MAX_STRING_LEN];
+                cfg_getword(w2,l);
+                while(l[0]) {
+                    cfg_getword(w,l);
+                    add_alt(BY_ENCODING,w2,w,"/",errors);
                 }
             }
             else if(!strcasecmp(w,"DefaultIcon")) {
@@ -405,11 +443,18 @@ fprintf(stderr,"AddDescription must have quotes around the description.\n");
             }
             else if(!strcasecmp(w,"ReadmeName")) {
                 cfg_getword(w,l);
-                strcpy(readme_fname,w);
+                add_readme(w,"/",errors);
             }
+            else if(!strcasecmp(w,"HeaderName")) {
+                cfg_getword(w,l);
+                add_header(w,"/",errors);
+            }
+            else if(!strcasecmp(w,"IndexOptions"))
+                add_opts(l,"/",errors);
             else {
-                fprintf(stderr,"Syntax error on line %d of %s:\n",n,srm_confname);
-                fprintf(stderr,"Unknown keyword %s.\n",w);
+                fprintf(errors,"Syntax error on line %d of %s:\n",n,
+                        srm_confname);
+                fprintf(errors,"Unknown keyword %s.\n",w);
                 exit(1);
             }
         }
@@ -430,8 +475,8 @@ security_data sec[MAX_SECURITY];
 
 void access_syntax_error(int n, char *err, char *file, FILE *out) {
     if(!file) {
-        fprintf(stderr,"Syntax error on line %d of access config. file.\n",n);
-        fprintf(stderr,"%s\n",err);
+        fprintf(out,"Syntax error on line %d of access config. file.\n",n);
+        fprintf(out,"%s\n",err);
         exit(1);
     }
     else {
@@ -508,8 +553,14 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                     sec[x].opts |= OPT_INDEXES;
                 else if(!strcasecmp(w,"Includes"))
                     sec[x].opts |= OPT_INCLUDES;
+                else if(!strcasecmp(w,"IncludesNOEXEC"))
+                    sec[x].opts |= (OPT_INCLUDES | OPT_INCNOEXEC);
                 else if(!strcasecmp(w,"FollowSymLinks"))
                     sec[x].opts |= OPT_SYM_LINKS;
+                else if(!strcasecmp(w,"SymLinksIfOwnerMatch"))
+                    sec[x].opts |= OPT_SYM_OWNER;
+                else if(!strcasecmp(w,"execCGI"))
+                    sec[x].opts |= OPT_EXECCGI;
                 else if(!strcasecmp(w,"None")) 
                     sec[x].opts = OPT_NONE;
                 else if(!strcasecmp(w,"All")) 
@@ -567,6 +618,12 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
             }
             add_type(w2,w,out);
         }
+        else if(!strcasecmp(w,"DefaultType")) {
+            if(!(or & OR_FILEINFO))
+                access_syntax_error(n,"override violation",file,out);
+            cfg_getword(w,l);
+            strcpy(default_type,w);
+        }
         else if(!strcasecmp(w,"AddEncoding")) {
             if(!(or & OR_FILEINFO))
                 access_syntax_error(n,"override violation",file,out);
@@ -579,49 +636,84 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
             }
             add_encoding(w2,w,out);
         }
-        else if(!strcasecmp(w,"AddDescription")) {
-            int fq;
-            if(!(or & OR_FILEINFO))
+        else if(!strcasecmp(w,"DefaultIcon")) {
+            if(!(or & OR_INDEXES))
                 access_syntax_error(n,"override violation",file,out);
-            if((fq = ind(l,'\"')) == -1) {
-                access_syntax_error(n,
-                 "AddDescription must have quotes around the description.\n",
+            cfg_getword(w,l);
+            strcpy(default_icon,w);
+        }
+        else if(!strcasecmp(w,"AddDescription")) {
+            char desc[MAX_STRING_LEN];
+            int fq;
+            
+            if(!(or & OR_INDEXES))
+                access_syntax_error(n,"override violation",file,out);
+            if((fq = ind(l,'\"')) == -1)
+                access_syntax_error(n,"AddDescription must have quotes",
                                     file,out);
-            }
             else {
-                getword(w2,&l[++fq],'\"');
+                getword(desc,&l[++fq],'\"');
                 cfg_getword(w,&l[fq]);
-                add_desc(w2,w,stderr);
+                add_desc(BY_PATH,desc,w,sec[x].d,out);
             }
         }
         else if(!strcasecmp(w,"IndexIgnore")) {
-            if(!(or & OR_FILEINFO))
+            if(!(or & OR_INDEXES))
                 access_syntax_error(n,"override violation",file,out);
             while(l[0]) {
                 cfg_getword(w,l);
-                add_ignore(w,out);
+                add_ignore(w,sec[x].d,out);
             }
         }
         else if(!strcasecmp(w,"AddIcon")) {
-            if(!(or & OR_FILEINFO))
+            char w2[MAX_STRING_LEN];
+            
+            if(!(or & OR_INDEXES))
                 access_syntax_error(n,"override violation",file,out);
             cfg_getword(w2,l);
             while(l[0]) {
                 cfg_getword(w,l);
-                add_icon(w2,w,out);
+                add_icon(BY_PATH,w2,w,sec[x].d,out);
+            }
+        }
+        else if(!strcasecmp(w,"AddIconByType")) {
+            char w2[MAX_STRING_LEN];
+            
+            if(!(or & OR_INDEXES))
+                access_syntax_error(n,"override violation",file,out);
+            cfg_getword(w2,l);
+            while(l[0]) {
+                cfg_getword(w,l);
+                add_icon(BY_TYPE,w2,w,sec[x].d,out);
+            }
+        }
+        else if(!strcasecmp(w,"AddIconByEncoding")) {
+            char w2[MAX_STRING_LEN];
+            
+            if(!(or & OR_INDEXES))
+                access_syntax_error(n,"override violation",file,out);
+            cfg_getword(w2,l);
+            while(l[0]) {
+                cfg_getword(w,l);
+                add_icon(BY_ENCODING,w2,w,sec[x].d,out);
             }
         }
         else if(!strcasecmp(w,"ReadmeName")) {
-            if(!(or & OR_FILEINFO))
+            if(!(or & OR_INDEXES))
                 access_syntax_error(n,"override violation",file,out);
             cfg_getword(w,l);
-            strcpy(readme_fname,w);
+            add_readme(w,sec[x].d,out);
         }
-        else if(!strcasecmp(w,"DefaultIcon")) {
-            if(!(or & OR_FILEINFO))
+        else if(!strcasecmp(w,"HeaderName")) {
+            if(!(or & OR_INDEXES))
                 access_syntax_error(n,"override violation",file,out);
             cfg_getword(w,l);
-            strcpy(default_icon,w);
+            add_header(w,sec[x].d,out);
+        }
+        else if(!strcasecmp(w,"IndexOptions")) {
+            if(!(or & OR_INDEXES))
+                access_syntax_error(n,"override violation",file,out);
+            add_opts(l,sec[x].d,out);
         }
         else if(!strcasecmp(w,"Redirect")) {
             if(!(or & OR_FILEINFO))
@@ -650,6 +742,7 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                 if(!strcasecmp(w,"GET")) m[M_GET]=1;
                 else if(!strcasecmp(w,"PUT")) m[M_PUT]=1;
                 else if(!strcasecmp(w,"POST")) m[M_POST]=1;
+                else if(!strcasecmp(w,"DELETE")) m[M_DELETE]=1;
             }
             while(1) {
                 if(cfg_getline(l,MAX_STRING_LEN,f))
@@ -670,6 +763,11 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                         for(i=0;i<METHODS;i++)
                             if(m[i]) 
                                 sec[x].order[i] = DENY_THEN_ALLOW;
+                    }
+                    else if(!strcasecmp(l,"mutual-failure")) {
+                        for(i=0;i<METHODS;i++)
+                            if(m[i]) 
+                                sec[x].order[i] = MUTUAL_FAILURE;
                     }
                     else
                         access_syntax_error(n,"Unknown order.",file,out);
@@ -751,7 +849,7 @@ void parse_htaccess(char *path, char override, FILE *out) {
 }
 
 
-void process_access_config() {
+void process_access_config(FILE *errors) {
     FILE *f;
     char l[MAX_STRING_LEN];
     char w[MAX_STRING_LEN];
@@ -759,7 +857,7 @@ void process_access_config() {
 
     num_sec = 0;n=0;
     if(!(f=fopen(access_confname,"r"))) {
-        fprintf(stderr,"httpd: could not open access configuration file %s.\n",
+        fprintf(errors,"httpd: could not open access configuration file %s.\n",
                 access_confname);
         perror("fopen");
         exit(1);
@@ -769,18 +867,18 @@ void process_access_config() {
         if((l[0] == '#') || (!l[0])) continue;
         cfg_getword(w,l);
         if(strcasecmp(w,"<Directory")) {
-            fprintf(stderr,
+            fprintf(errors,
                     "Syntax error on line %d of access config. file.\n",n);
-            fprintf(stderr,"Unknown directive %s.\n",w);
+            fprintf(errors,"Unknown directive %s.\n",w);
             exit(1);
         }
         getword(w,l,'>');
-        n=parse_access_dir(f,n,OR_ALL,w,NULL,stderr);
+        n=parse_access_dir(f,n,OR_ALL,w,NULL,errors);
     }
     fclose(f);
 }
 
-int get_pw(char *user, char *pw) {
+int get_pw(char *user, char *pw, FILE *errors) {
     FILE *f;
     char errstr[MAX_STRING_LEN];
     char l[MAX_STRING_LEN];
@@ -788,7 +886,7 @@ int get_pw(char *user, char *pw) {
 
     if(!(f=fopen(auth_pwfile,"r"))) {
         sprintf(errstr,"Could not open user file %s",auth_pwfile);
-        die(SERVER_ERROR,errstr,stdout); /* AAAAAAAAGH stdout */
+        die(SERVER_ERROR,errstr,errors);
     }
     while(!(cfg_getline(l,MAX_STRING_LEN,f))) {
         if((l[0] == '#') || (!l[0])) continue;
@@ -868,12 +966,12 @@ void kill_group() {
     }   
 }
 
-void read_config()
+void read_config(FILE *errors)
 {
     reset_aliases();
-    process_server_config();
-    init_mime();
+    process_server_config(errors);
+    init_mime(errors);
     init_indexing();
-    process_resource_config();
-    process_access_config();
+    process_resource_config(errors);
+    process_access_config(errors);
 }

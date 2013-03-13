@@ -2,7 +2,7 @@
 #
 # wais.pl -- WAIS search interface
 #
-# wais.pl,v 1.1 1993/12/31 09:30:56 robm Exp
+# wais.pl,v 1.2 1994/04/10 05:33:29 robm Exp
 #
 # Tony Sanders <sanders@bsdi.com>, Nov 1993
 #
@@ -84,4 +84,5 @@ sub docdone {
     $score = $headline = $lines = $bytes = $type = $date = '';
 }
 
+open (STDERR,"> /dev/null");
 eval '&do_wais';

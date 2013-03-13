@@ -31,7 +31,7 @@ int isname(char);
 
 int main(int argc, char **argv)
 {
-    char input[MAXLINE], *mapname, def[MAXLINE], conf[80];
+    char input[MAXLINE], *mapname, def[MAXLINE], conf[MAXLINE];
     double testpoint[2], pointarray[MAXVERTS][2];
     int i, j, k;
     FILE *fp;
@@ -63,11 +63,11 @@ int main(int argc, char **argv)
             confname[i] = input[i];
         confname[i] = '\0';
         if(!strcmp(confname,mapname))
-            break;
+            goto found;
     }
     if(feof(fp))
         servererr("Map not found in configuration file.");
-
+  found:
     fclose(fp);
     while(isspace(input[i]) || input[i] == ':') ++i;
 

@@ -4,13 +4,13 @@
 #CC= cc
 # For Suns or other non-ANSI platforms. Please make sure your gcc is
 # 2.0 or later, as 1.40 seems to create bad code for the Sun 4.
-CC= gcc
+CC= gcc 
 
 # For optimization
-#CFLAGS= -O2
+CFLAGS= -O2
 # For debugging information
-#CFLAGS= -g -DPEM_AUTH
-CFLAGS= -g
+#CFLAGS= -g -DPEM_AUTH 
+#CFLAGS= -g
 
 # Place here any extra libraries you may need to link to. You
 # shouldn't have to.
@@ -34,7 +34,7 @@ AUX_CFLAGS= -DSUNOS4
 # For HP-UX
 #AUX_CFLAGS= -DHPUX
 # For AIX
-#AUX_CFLAGS= -DAIX
+#AUX_CFLAGS= -DAIX -U__STR__
 # For Ultrix
 #AUX_CFLAGS= -DULTRIX
 # For DEC OSF/1
@@ -47,6 +47,14 @@ AUX_CFLAGS= -DSUNOS4
 #AUX_CFLAGS= -DLINUX
 # For A/UX
 #AUX_CFLAGS= -DAUX
+# For SCO ODT
+# libcrypt_i available from sosco.sco.com, files /SLS/lng225b.Z and
+# /SLS/lng225b.ltr.Z
+#AUX_CFLAGS= -DSCO
+#EXTRA_LIBS= -lPW -lsocket -lmalloc -lcrypt_i
+# For SVR4
+#AUX_CFLAGS= -DSVR4
+#EXTRA_LIBS= -lsocket -lnsl -lc
 
 # Place here any flags you may need upon linking, such as a flag to
 # prevent dynamic linking (if desired)
@@ -56,7 +64,8 @@ LFLAGS=
 
 OBJS=http_config.o httpd.o http_request.o util.o http_dir.o \
 http_alias.o http_log.o http_mime.o http_access.o http_auth.o \
-http_get.o http_put.o http_script.o rfc931.o
+http_get.o http_post.o http_script.o http_include.o rfc931.o \
+http_put.o http_delete.o
 
 .c.o:
 	$(CC) -c $(CFLAGS) $(AUX_CFLAGS) $<

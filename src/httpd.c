@@ -91,7 +91,7 @@ void seg_fault() {
 void set_signals();
 
 void restart() {
-    log_error("httpd: caught SIGHUP, restarting");
+    log_error_noclose("httpd: caught SIGHUP, restarting");
     kill_mime();
     kill_security();
     kill_indexing();
@@ -99,10 +99,10 @@ void restart() {
         free(server_hostname);
         server_hostname = NULL;
     }
-    read_config();
+    read_config(error_log);
     close_logs();
     open_logs();
-    log_error("httpd: successful restart");
+    log_error_noclose("httpd: successful restart");
     get_local_host();
     set_signals();
 }
@@ -245,7 +245,7 @@ main(int argc, char *argv[])
             usage(argv[0]);
         }
     }
-    read_config();
+    read_config(stderr);
     open_logs();
     get_local_host();
 
@@ -254,6 +254,7 @@ main(int argc, char *argv[])
     else {
         user_id = getuid();
         group_id = getgid();
+
         port = get_portnum(fileno(stdout),stdout);
         if(do_rfc931)
             remote_logname = get_remote_logname(stdout);

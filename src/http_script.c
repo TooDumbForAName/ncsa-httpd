@@ -9,11 +9,24 @@
 
 #include "httpd.h"
 
+int pid;
+
+void kill_children() {
+    char errstr[MAX_STRING_LEN];
+    sprintf(errstr,"killing CGI process %d",pid);
+    log_error_noclose(errstr);
+
+    kill(pid,SIGTERM);
+    sleep(5); /* give them time to clean up */
+    kill(pid,SIGKILL);
+    waitpid(pid,NULL,0);
+}
+
 char **create_argv(char *av0, char *args, FILE *out) {
     register int x,n;
     char **av;
-    char w[MAX_STRING_LEN];
-    char l[MAX_STRING_LEN];
+    char w[HUGE_STRING_LEN];
+    char l[HUGE_STRING_LEN];
 
     for(x=0,n=2;args[x];x++)
         if(args[x] == '+') ++n;
@@ -37,7 +50,7 @@ void get_path_info(char *path, char *path_args, FILE *out,
                    struct stat *finfo)
 {
     register int x,max;
-    char t[MAX_STRING_LEN];
+    char t[HUGE_STRING_LEN];
 
     path_args[0] = '\0';
     max=count_dirs(path);
@@ -45,8 +58,9 @@ void get_path_info(char *path, char *path_args, FILE *out,
         make_dirstr(path,x+1,t);
         if(!(stat(t,finfo))) {
             if(S_ISREG(finfo->st_mode)) {
-                strcpy(path_args,&path[strlen(t)]);
-                strcpy(path,t);
+                int l=strlen(t);
+                strcpy(path_args,&path[l]);
+                path[l] = '\0';
                 return;
             }
         }
@@ -65,81 +79,95 @@ void get_path_info(char *path, char *path_args, FILE *out,
     die(NOT_FOUND,path,out);
 }
 
-#define MAX_CGI_VARS 18
+#define MAX_COMMON_VARS 9
+#define MAX_CGI_VARS (MAX_COMMON_VARS+9)
 
-void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out) 
+char **add_cgi_vars(char **env,
+                    char *method, char *path, char *path_args, char *args,
+                    int *content,
+                    FILE *out)
 {
-    int pid, p[2];
-    int content, nph;
-    char cl[MAX_STRING_LEN],t[MAX_STRING_LEN],t2[MAX_STRING_LEN];
-    char path_args[MAX_STRING_LEN];
-    char *argv0,**env;
-    FILE *psin;
-    struct stat finfo;
-    register int n,x;
+    int x;
+    char t[HUGE_STRING_LEN],t2[HUGE_STRING_LEN];
 
-    get_path_info(path,path_args,out,&finfo);
-    
-    if(!can_exec(&finfo)) {
-        unmunge_name(path);
-        die(FORBIDDEN,path,out);
-    }
+    if(!(env = new_env(env,MAX_CGI_VARS,&x)))
+        die(NO_MEMORY,"add_cgi_vars",out);
 
-    /* BAD -- method specific */
-    evaluate_access(path,&finfo,((!strcmp(method,"POST")) ? M_POST : M_GET),
-                    &allow,&allow_options,out);
-    if(!allow) {
-        log_reason("client denied by server configuration",path);
-        unmunge_name(path);
-        die(FORBIDDEN,path,out);
-    }
+    env[x++] = make_env_str("GATEWAY_INTERFACE","CGI/1.1",out);
 
-    if(!(env = (char **)malloc((MAX_CGI_VARS + 2) * sizeof(char *))))
-        die(NO_MEMORY,"exec_cgi_script",out);
-    n = 0;
-    env[n++] = make_env_str("PATH",getenv("PATH"),out);
-    env[n++] = make_env_str("SERVER_SOFTWARE",SERVER_VERSION,out);
-    env[n++] = make_env_str("SERVER_NAME",server_hostname,out);
-    env[n++] = make_env_str("GATEWAY_INTERFACE","CGI/1.0",out);
-
-    sprintf(t,"%d",port);
-    env[n++] = make_env_str("SERVER_PORT",t,out);
-
-    env[n++] = make_env_str("SERVER_PROTOCOL",
+    env[x++] = make_env_str("SERVER_PROTOCOL",
               (assbackwards ? "HTTP/0.9" : "HTTP/1.0"),out);
-    env[n++] = make_env_str("REQUEST_METHOD",method,out);
-    env[n++] = make_env_str("HTTP_ACCEPT",http_accept,out);
-    if(path_args[0]) {
-        env[n++] = make_env_str("PATH_INFO",path_args,out);
-        strcpy(t2,path_args);
-        translate_name(t2,out);
-        env[n++] = make_env_str("PATH_TRANSLATED",t2,out);
-    }
+    env[x++] = make_env_str("REQUEST_METHOD",method,out);
+
     strcpy(t,path);
     unmunge_name(t);
-    env[n++] = make_env_str("SCRIPT_NAME",t,out);
-    env[n++] = make_env_str("QUERY_STRING",args,out);
-    env[n++] = make_env_str("REMOTE_HOST",remote_name,out);
-    env[n++] = make_env_str("REMOTE_ADDR",remote_ip,out);
-    if(user[0])
-        env[n++] = make_env_str("REMOTE_USER",user,out);
-    if(auth_type)
-        env[n++] = make_env_str("AUTH_TYPE",auth_type,out);
-
-    if(do_rfc931)
-        env[n++] = make_env_str("REMOTE_IDENT",remote_logname,out);
-    content=0;
-    if((!strcmp(method,"POST")) || (!strcmp(method,"PUT"))) {
-        content=1;
-        sprintf(cl,"%d",content_length);
-        env[n++] = make_env_str("CONTENT_TYPE",content_type,out);
-        env[n++] = make_env_str("CONTENT_LENGTH",cl,out);
+    env[x++] = make_env_str("SCRIPT_NAME",t,out);
+    if(path_args[0]) {
+        env[x++] = make_env_str("PATH_INFO",path_args,out);
+        strcpy(t2,path_args);
+        translate_name(t2,out);
+        env[x++] = make_env_str("PATH_TRANSLATED",t2,out);
     }
-    env[n] = NULL;
+    env[x++] = make_env_str("QUERY_STRING",args,out);
+
+    if(content) {
+        *content=0;
+        if((!strcmp(method,"POST")) || (!strcmp(method,"PUT"))) {
+            *content=1;
+            sprintf(t,"%d",content_length);
+            env[x++] = make_env_str("CONTENT_TYPE",content_type,out);
+            env[x++] = make_env_str("CONTENT_LENGTH",t,out);
+        }
+    }
+    env[x] = NULL;
+    return env;
+}
+
+char **add_common_vars(char **env,FILE *out) {
+    char t[HUGE_STRING_LEN],*env_path;
+    int x;
+
+    if(!(env = new_env(env,MAX_COMMON_VARS,&x)))
+        die(NO_MEMORY,"add_common_vars",out);
+    
+    if(!(env_path = getenv("PATH")))
+        env_path=DEFAULT_PATH;
+    env[x++] = make_env_str("PATH",env_path,out);
+    env[x++] = make_env_str("SERVER_SOFTWARE",SERVER_VERSION,out);
+    env[x++] = make_env_str("SERVER_NAME",server_hostname,out);
+    sprintf(t,"%d",port);
+    env[x++] = make_env_str("SERVER_PORT",t,out);
+    env[x++] = make_env_str("REMOTE_HOST",remote_name,out);
+    env[x++] = make_env_str("REMOTE_ADDR",remote_ip,out);
+    if(user[0])
+        env[x++] = make_env_str("REMOTE_USER",user,out);
+    if(auth_type)
+        env[x++] = make_env_str("AUTH_TYPE",auth_type,out);
+    if(do_rfc931)
+        env[x++] = make_env_str("REMOTE_IDENT",remote_logname,out);
+    env[x] = NULL;
+    return env;
+}
+
+int cgi_stub(char *method, char *path, char *path_args, char *args,
+             char **env, struct stat *finfo, int in, FILE *out)
+{
+    int p[2];
+    int content, nph;
+    char *argv0;
+    FILE *psin;
+    register int x;
+
+    if(!can_exec(finfo)) {
+        unmunge_name(path);
+        die(FORBIDDEN,path,out);
+    }
 
     if((argv0 = strrchr(path,'/')) != NULL)
         argv0++;
     else argv0 = path;
+
+    chdir_file(path);
 
     if(pipe(p) < 0)
         die(SERVER_ERROR,"httpd: could not create IPC pipe",out);
@@ -148,6 +176,8 @@ void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out)
 
     nph = (strncmp(argv0,"nph-",4) ? 0 : 1);
     if(!pid) {
+        close(p[0]);
+        env = add_cgi_vars(env,method,path,path_args,args,&content,out);
         if(content)
             if(in != STDIN_FILENO) {
                 dup2(in,STDIN_FILENO);
@@ -164,6 +194,7 @@ void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out)
                 close(p[1]);
             }
         }
+        error_log2stderr();
         /* Only ISINDEX scripts get decoded arguments. */
         if((!args[0]) || (ind(args,'=') >= 0)) {
             if(execle(path,argv0,(char *)0,env) == -1) {
@@ -181,9 +212,6 @@ void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out)
         }
     }
     else {
-        for(x=0;x<n;x++)
-            free(env[n]);
-        free(env);
         close(p[1]);
     }
 
@@ -191,33 +219,69 @@ void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out)
         if(!(psin = fdopen(p[0],"r")))
             die(SERVER_ERROR,"could not read from script",out);
 
-        if(scan_script_header(psin,out))
-            die(REDIRECT,location,out);
+        if(scan_script_header(psin,out)) {
+            kill_children(); /* !!! */
+            return REDIRECT_URL;
+        }
 
         if(location[0] == '/') {
-            char t[MAX_STRING_LEN],a[MAX_STRING_LEN],*argp;
+            char t[HUGE_STRING_LEN],a[HUGE_STRING_LEN],*argp;
 
             a[0] = '\0';
             fclose(psin);
             waitpid(pid,NULL,0);
             strcpy(t,location);
-            location[0] = '\0';
             if(argp = strchr(t,'?')) {
                 *argp++ = '\0';
                 strcpy(a,argp);
             }
-            process_get(in,out,method,t,a);
-            return;
+            init_header_vars(); /* clear in_header_env and location */
+            process_get(in,out,"GET",t,a);
+            return 0;
         }
         content_length = -1;
         if(!assbackwards)
             send_http_header(out);
         if(!header_only)
-            send_fd(psin,out,args);
-        /* This will cause SIGPIPE in child... it should terminate */
+            send_fd(psin,out,kill_children);
+        else
+            kill_children();
         fclose(psin);
     }
+    else bytes_sent = -1;
     waitpid(pid,NULL,0);
+    return 0;
+}
+
+/* Called for ScriptAliased directories */
+void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out)
+{
+    struct stat finfo;
+    char path_args[HUGE_STRING_LEN];
+    char **env;
+    int m;
+
+    get_path_info(path,path_args,out,&finfo);
+    if((!strcmp(method,"GET")) || (!strcmp(method,"HEAD"))) m=M_GET;
+    else if(!strcmp(method,"POST")) m=M_POST;
+    else if(!strcmp(method,"PUT")) m=M_PUT;
+    else if(!strcmp(method,"DELETE")) m=M_DELETE;
+
+    evaluate_access(path,&finfo,m,&allow,&allow_options,out);
+    if(!allow) {
+        log_reason("client denied by server configuration",path);
+        unmunge_name(path);
+        die(FORBIDDEN,path,out);
+    }
+    if(!(env = add_common_vars(in_headers_env,out)))
+        die(NO_MEMORY,"exec_cgi_script",out);
+
+    bytes_sent = 0;
+    if(cgi_stub(method,path,path_args,args,env,&finfo,in,out) == REDIRECT_URL)
+        die(REDIRECT,location,out);
+    /* cgi_stub will screw with env, but only after the fork */
+    free_env(env);
+    log_transaction();
 }
 
 char **set_env_NCSA(FILE *out) {
@@ -240,10 +304,10 @@ char **set_env_NCSA(FILE *out) {
     return env;
 }
 
-void exec_get_NCSA(char *path, char *args, FILE *fd) {
+void exec_get_NCSA(char *path, char *args, int in, FILE *fd) {
     FILE *tfp;
     struct stat finfo;
-    int pid,pfd[2];
+    int pfd[2];
     char path_args[MAX_STRING_LEN];
     char t[MAX_STRING_LEN];
     register int n,x;
@@ -329,7 +393,7 @@ void exec_get_NCSA(char *path, char *args, FILE *fd) {
         if(!(t = strdup(location)))
             die(NO_MEMORY,"exec_get_NCSA",fd);
         location[0] = '\0';
-        send_node(t,"",fd);
+        send_node(t,"",in,fd);
         htexit(0,fd);
     }
 
@@ -337,7 +401,9 @@ void exec_get_NCSA(char *path, char *args, FILE *fd) {
         send_http_header(fd);
 
     if(!header_only)
-        send_fd(tfp,fd,args);
+        send_fd(tfp,fd,kill_children);
+    else
+        kill_children();
     fclose(tfp);
     waitpid(pid,NULL,0);
 }
@@ -345,7 +411,7 @@ void exec_get_NCSA(char *path, char *args, FILE *fd) {
 
 
 void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
-    int pid, inpipe[2],outpipe[2], x;
+    int inpipe[2],outpipe[2], x;
     char cl[MAX_STRING_LEN];
     FILE *psin,*psout;
     struct stat finfo;
@@ -404,7 +470,7 @@ void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
         if(!(t = strdup(location)))
             die(NO_MEMORY,"exec_post_NCSA",out);
         location[0] = '\0';
-        send_node(t,"",out);
+        send_node(t,"",in,out);
         htexit(0,out);
     }
 
@@ -412,7 +478,7 @@ void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
     if(!assbackwards)
         send_http_header(out);
 
-    send_fd(psin,out,args);
+    send_fd(psin,out,kill_children);
     fclose(psin);
     waitpid(pid,NULL,0);
 }

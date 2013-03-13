@@ -19,13 +19,137 @@ char *get_time() {
 }
 
 char *gm_timestr_822(time_t sec) {
-    struct tm *t;
-    static char ts[MAX_STRING_LEN];
+    /* HUH??? Why is the GMT hardcode necessary? */
+    return ht_time(sec,"%A, %d-%h-%y %T GMT", 1);
+}
 
-    t = gmtime(&sec);
+char *ht_time(time_t t, char *fmt, int gmt) {
+    static char ts[MAX_STRING_LEN];
+    struct tm *tms;
+
+    tms = (gmt ? gmtime(&t) : localtime(&t));
+
     /* check return code? */
-    strftime(ts,MAX_STRING_LEN,"%A, %d-%h-%y %T GMT",t);
+    strftime(ts,MAX_STRING_LEN,fmt,tms);
     return ts;
+}
+
+/* What a pain in the ass. */
+struct tm *get_gmtoff(long *tz) {
+    time_t tt;
+    struct tm *t;
+
+    tt = time(NULL);
+    t = localtime(&tt);
+#ifdef BSD
+    *tz = t->tm_gmtoff;
+#else
+    *tz = - timezone;
+    if(t->tm_isdst)
+        *tz += 3600;
+#endif
+    return t;
+}
+
+/* What another pain in the ass. */
+
+static char *months[] = {
+    "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
+};
+
+static int ydays[] = {
+    0,31,59,90,120,151,181,212,243,273,304,334
+};
+
+int find_month(char *mon) {
+    register int x;
+
+    for(x=0;x<12;x++)
+        if(!strcmp(months[x],mon))
+            return x;
+    return -1;
+}
+
+#define find_yday(mon,day) (ydays[mon] + day)
+
+int later_than(char *last_modified, char *ims) {
+    char idate[MAX_STRING_LEN], ldate[MAX_STRING_LEN];
+    char itime[MAX_STRING_LEN], ltime[MAX_STRING_LEN];
+    char w[MAX_STRING_LEN];
+    int lday,lmon,lyear, iday,imon,iyear, lhour,lmin, ihour,imin, x;
+    long lsec, isec;
+
+    sscanf(ims,"%*s %s %s",idate,itime);
+    sscanf(last_modified,"%*s %s %s",ldate,ltime);
+
+    getword(w,idate,'-');
+    sscanf(w,"%d",&iday);
+    getword(w,ldate,'-');
+    sscanf(w,"%d",&lday);
+
+    getword(w,idate,'-');
+    imon = find_month(w);
+    getword(w,ldate,'-');
+    lmon = find_month(w);
+
+    sscanf(idate,"%d",&iyear);
+    sscanf(ldate,"%d",&lyear);
+
+    x = lyear - iyear;
+    if(x > 0) return 0;
+    if(x < 0) return 1;
+
+    x = find_yday(lmon, lday) - find_yday(imon,iday);
+    if(x > 0) return 0;
+    if(x < 0) return 1;
+
+    sscanf(itime,"%d:%d:%ld",&ihour,&imin,&isec);
+    sscanf(ltime,"%d:%d:%ld",&lhour,&lmin,&lsec);
+
+    isec += (imin*60) + (ihour*3600);
+    lsec += (lmin*60) + (lhour*3600);
+
+    x = lsec - isec;
+    if(x > 0) return 0;
+
+    return 1;
+}
+
+
+
+
+/* Match = 0, NoMatch = 1, Abort = -1 */
+/* Based loosely on sections of wildmat.c by Rich Salz */
+int strcmp_match(char *str, char *exp) {
+    int x,y;
+
+    for(x=0,y=0;exp[y];++y,++x) {
+        if((!str[x]) && (exp[y] != '*'))
+            return -1;
+        if(exp[y] == '*') {
+            while(exp[++y] == '*');
+            if(!exp[y])
+                return 0;
+            while(str[x]) {
+                int ret;
+                if((ret = strcmp_match(&str[x++],&exp[y])) != 1)
+                    return ret;
+            }
+            return -1;
+        } else 
+            if((exp[y] != '?') && (str[x] != exp[y]))
+                return 1;
+    }
+    return (str[x] != '\0');
+}
+
+int is_matchexp(char *str) {
+    register int x;
+
+    for(x=0;str[x];x++)
+        if((str[x] == '*') || (str[x] == '?'))
+            return 1;
+    return 0;
 }
 
 void strsubfirst(int start,char *dest, char *src)
@@ -69,6 +193,15 @@ void getparents(char *name)
     }
 }
 
+void no2slash(char *name) {
+    register int x,y;
+
+    for(x=0; name[x]; x++)
+        if(x && (name[x-1] == '/') && (name[x] == '/'))
+            for(y=x+1;name[y-1];y++)
+                name[y-1] = name[y];
+}
+
 void make_dirstr(char *s, int n, char *d) {
     register int x,f;
 
@@ -101,6 +234,23 @@ void strcpy_dir(char *d, char *s) {
     d[x] = '\0';
 }
 
+void chdir_file(char *file) {
+    int i;
+
+    if((i = rind(file,'/')) == -1)
+        return;
+    file[i] = '\0';
+    chdir(file);
+    file[i] = '/';
+}
+
+void http2cgi(char *w) {
+    register int x;
+
+    for(x=strlen(w);x != -1; --x)
+        w[x+5]= (w[x] == '-' ? '_' : toupper(w[x]));
+    strncpy(w,"HTTP_",5);
+}
 
 void getline_timed_out() {
     char errstr[MAX_STRING_LEN];
@@ -113,12 +263,15 @@ void getline_timed_out() {
 }
 
 int getline(char *s, int n, int f, unsigned int timeout) {
-    register int i=0;
+    register int i=0, ret;
 
     signal(SIGALRM,getline_timed_out);
     alarm(timeout);
     while(1) {
-        if(read(f,&s[i],1) <= 0) {
+        if((ret = read(f,&s[i],1)) <= 0) {
+            /* Mmmmm, Solaris.  */
+            if((ret == -1) && (errno == EINTR))
+                continue;
             s[i] = '\0';
             return 1;
         }
@@ -311,6 +464,34 @@ char *make_env_str(char *name, char *value, FILE *out) {
     return t;
 }
 
+char **new_env(char **env, int to_add, int *pos) {
+    if(!env) {
+        *pos = 0;
+        return (char **)malloc((to_add+1)*sizeof(char *));
+    }
+    else {
+        int x;
+        char **newenv;
+
+        for(x=0;env[x];x++);
+        if(!(newenv = (char **)malloc((to_add+x+1)*(sizeof(char *)))))
+            return NULL;
+        for(x=0;env[x];x++)
+            newenv[x] = env[x];
+        *pos = x;
+        free(env);
+        return newenv;
+    }
+}
+
+void free_env(char **env) {
+    int x;
+
+    for(x=0;env[x];x++)
+        free(env[x]);
+    free(env);
+}
+
 int can_exec(struct stat *finfo) {
     if(user_id == finfo->st_uid)
         if(finfo->st_mode & S_IXUSR)
@@ -453,8 +634,20 @@ int get_portnum(int sd,FILE *out) {
     len = sizeof(struct sockaddr);
     if(getsockname(sd,&addr,&len) < 0)
         die(SERVER_ERROR,"could not get port number",out);
+    return ntohs(((struct sockaddr_in *)&addr)->sin_port);
+}
 
-    return(((struct sockaddr_in *)&addr)->sin_port);
+char *find_fqdn(struct hostent *p) {
+    int x;
+
+    if(ind(p->h_name,'.') == -1) {
+        for(x=0;p->h_aliases[x];++x) {
+            if((ind(p->h_aliases[x],'.') != -1) && 
+               (!strncmp(p->h_aliases[x],p->h_name,strlen(p->h_name))))
+                return strdup(p->h_aliases[x]);
+        }
+        return NULL;
+    } else return strdup(p->h_name);
 }
 
 void get_remote_host(int fd) {
@@ -462,9 +655,9 @@ void get_remote_host(int fd) {
     int len;
     struct in_addr *iaddr;
     struct hostent *hptr;
-        
+
     len = sizeof(struct sockaddr);
-    
+
     if ((getpeername(fd, &addr, &len)) < 0) {
         remote_host=NULL;
         remote_ip=NULL;
@@ -479,7 +672,21 @@ void get_remote_host(int fd) {
         remote_name = remote_host;
     }
     else remote_host = NULL;
-    
+
+    /* Grrr. Check THAT name to make sure it's really the name of the addr. */
+    /* Code from Harald Hanche-Olsen <hanche@imf.unit.no> */
+    if(remote_host) {
+        char **haddr;
+        hptr = gethostbyname(remote_host);
+        if (hptr) {
+            for(haddr=hptr->h_addr_list;*haddr;haddr++) {
+                if(((struct in_addr *)(*haddr))->s_addr == iaddr->s_addr)
+                    break;
+            }
+        }
+        if((!hptr) || (!(*haddr)))
+            remote_host = NULL;
+    }
     remote_ip = inet_ntoa(*iaddr);
     if(!remote_host)
         remote_name = remote_ip;
@@ -489,8 +696,7 @@ char *get_remote_logname(FILE *fd) {
     int len;
     char *result;
 #ifdef NEXT
-    struct sockaddr_in sa_server;
-    struct sockaddr sa_client;
+    struct sockaddr sa_server, sa_client;
 #else
     struct sockaddr_in sa_server,sa_client;
 #endif
@@ -515,9 +721,7 @@ void get_local_host()
     if(!server_hostname) {
         struct hostent *p;
         gethostname(str, len);
-        if(p=gethostbyname(str))
-            server_hostname = strdup(p->h_name);
-        else {
+        if((!(p=gethostbyname(str))) || (!(server_hostname = find_fqdn(p)))) {
             fprintf(stderr,"httpd: cannot determine local host name.\n");
             fprintf(stderr,"Use ServerName to set it manually.\n");
             exit(1);

@@ -1,6 +1,9 @@
 # With this document, you define the name space that users see of your http
 # server.
 
+# See the tutorials at http://hoohoo.ncsa.uiuc.edu/docs/tutorials/ for
+# more information.
+
 # Rob (robm@ncsa.uiuc.edu)
 
 
@@ -27,13 +30,15 @@ FancyIndexing on
 # AddIcon tells the server which icon to show for different files or filename
 # extensions
 
-AddIcon /icons/text.xbm .html .txt
-AddIcon /icons/image.xbm .gif .jpg .xbm .tiff
-AddIcon /icons/sound.xbm .au
-AddIcon /icons/movie.xbm .mpg
+AddIconByType (TXT,/icons/text.xbm) text/*
+AddIconByType (IMG,/icons/image.xbm) image/*
+AddIconByType (SND,/icons/sound.xbm) audio/*
+AddIcon /icons/movie.xbm .mpg .qt
 AddIcon /icons/binary.xbm .bin
+
 AddIcon /icons/back.xbm ..
-AddIcon /icons/menu.xbm **DIRECTORY**
+AddIcon /icons/menu.xbm ^^DIRECTORY^^
+AddIcon /icons/blank.xbm ^^BLANKICON^^
 
 # DefaultIcon is which icon to show for files which do not have an icon
 # explicitly set.
@@ -49,13 +54,17 @@ DefaultIcon /icons/unknown.xbm
 #
 # The server will first look for name.html, include it if found, and it will
 # then look for name and include it as plaintext if found.
+#
+# HeaderName is the name of a file which should be prepended to
+# directory indexes. 
 
 ReadmeName README
+HeaderName HEADER
 
 # IndexIgnore is a set of filenames which directory indexing should ignore
 # Format: IndexIgnore name1 name2...
 
-IndexIgnore /.htaccess ~ #
+IndexIgnore */.??* *~ *# */HEADER* */README*
 
 # AccessFileName: The name of the file to look for in each directory
 # for access control information.
@@ -70,6 +79,12 @@ DefaultType text/plain
 # AddType allows you to tweak mime.types without actually editing it, or to
 # make certain files to be certain types.
 # Format: AddType type/subtype ext1
+
+# AddEncoding allows you to have certain browsers (Mosaic/X 2.1+) uncompress
+# information on the fly. Note: Not all browsers support this.
+
+#AddEncoding x-compress Z
+#AddEncoding x-gzip gz
 
 # Redirect allows you to tell clients about documents which used to exist in
 # your server's namespace, but do not anymore. This allows you to tell the
@@ -86,3 +101,9 @@ Alias /icons/ /usr/local/etc/httpd/icons/
 # Format: ScriptAlias fakename realname
 
 ScriptAlias /cgi-bin/ /usr/local/etc/httpd/cgi-bin/
+
+# If you want to use server side includes, or CGI outside
+# ScriptAliased directories, uncomment the following lines.
+
+#AddType text/x-server-parsed-html .shtml
+#AddType application/x-httpd-cgi .cgi

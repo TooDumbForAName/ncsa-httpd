@@ -57,5 +57,5 @@ change-passwd: change-passwd.o util.o
 
 
 clean:
-	rm -f *.o ../cgi-bin/post-query ../cgi-bin/query ../cgi-bin/change-passwd ../cgi-bin/phf ../cgi-bin/jj
+	rm -f *.o ../cgi-bin/post-query ../cgi-bin/query ../cgi-bin/change-passwd ../cgi-bin/phf ../cgi-bin/jj ../cgi-bin/imagemap
 

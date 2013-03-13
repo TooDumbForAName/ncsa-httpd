@@ -55,7 +55,7 @@ void check_auth(security_data *sec, int m, FILE *out) {
     char t[MAX_STRING_LEN];
     char w[MAX_STRING_LEN];
     char errstr[MAX_STRING_LEN];
-    register int x;
+    register int x,y;
     int grpstatus;
 
     if(!auth_type) {
@@ -81,7 +81,7 @@ void check_auth(security_data *sec, int m, FILE *out) {
         uudecode(t,(unsigned char *)ad,MAX_STRING_LEN);
         getword(user,ad,':');
         strcpy(sent_pw,ad);
-        if(!get_pw(user,real_pw)) {
+        if(!get_pw(user,real_pw,out)) {
             sprintf(errstr,"user %s not found",user);
             auth_bong(errstr,out);
         }
@@ -134,6 +134,11 @@ void check_auth(security_data *sec, int m, FILE *out) {
             goto found;
         if(!strcmp(w,"user")) {
             while(t[0]) {
+                if(t[0] == '\"') {
+                    getword(w,&t[1],'\"');
+                    for(y=0;t[y];y++)
+                        t[y] = t[y+1];
+                }
                 getword(w,t,' ');
                 if(!strcmp(user,w))
                     goto found;
@@ -176,7 +181,7 @@ void pem_cleanup(int status, FILE *out) {
     }
 }
 
-int pem_decrypt(int sfd, char *req, FILE **out) {
+int decrypt_request(int sfd, char *req, FILE **out) {
     int tfd,nr,pid,p[2],decrypt_fd,pem,pgp;
     char w[MAX_STRING_LEN],w2[MAX_STRING_LEN];
     char c;
@@ -186,9 +191,10 @@ int pem_decrypt(int sfd, char *req, FILE **out) {
     doing_pem = ENCODING_NONE;
     if(strcmp(req,"/"))
         return -1;
-
+        
     pem = !(strcmp(content_type,"application/x-www-pem-request"));
     pgp = !(strcmp(content_type,"application/x-www-pgp-request"));
+
     if((!pem) && (!pgp))
         return -1;
 
@@ -276,6 +282,7 @@ int pem_decrypt(int sfd, char *req, FILE **out) {
             dup2(p[1],STDOUT_FILENO);
             close(p[1]);
         }
+        error_log2stderr();
         if(!(argv0 = strrchr(decrypt,'/')))
             argv0 = decrypt;
         else

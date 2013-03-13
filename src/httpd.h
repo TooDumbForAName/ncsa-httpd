@@ -25,7 +25,10 @@ char *crypt(char *pw, char *salt);
 #undef BSD
 #define NO_KILLPG
 #undef NO_SETSID
+#ifndef _HPUX_SOURCE
 #define _HPUX_SOURCE
+#endif
+#define getwd(d) getcwd(d,MAX_STRING_LEN)
 
 #elif defined(AIX)
 #undef BSD
@@ -115,6 +118,11 @@ typedef int pid_t;
 #define NEED_STRNCASECMP
 #define bzero(a,b) memset(a,0,b)
 
+#elif defined(__NetBSD__)
+#define BSD
+#undef NO_KILLPG
+#undef NO_SETSID
+
 /* Unknown system - Edit these to match */
 #else
 /* BSD is whether your system uses BSD calls or System V calls. */
@@ -134,6 +142,9 @@ typedef int pid_t;
  * /usr/include/sys/dir.h, define DIR_TYPE to be direct and include that
  * file. If you have neither, I'm confused.
  */
+
+#include <sys/types.h>
+
 #if !defined(NEXT) && !defined(CONVEXOS)
 #include <dirent.h>
 #define DIR_TYPE dirent
@@ -157,9 +168,6 @@ typedef int pid_t;
 
 /* Max. number of security defines */
 #define MAX_SECURITY 50
-
-/* Max. number of include files */
-#define MAXINCLUDES 20
 
 /* Default administrator's address */
 #define DEFAULT_ADMIN "[no address given]"
@@ -218,6 +226,11 @@ typedef int pid_t;
 /* The default directory in user's home dir */
 #define DEFAULT_USER_DIR "public_html"
 
+/* The default path for CGI scripts if none is currently set */
+#define DEFAULT_PATH "/bin:/usr/bin:/usr/ucb:/usr/bsd:/usr/local/bin"
+
+/* The path to the Bourne shell, for parsed docs */
+#define SHELL_PATH "/bin/sh"
 
 /* The default string lengths */
 #define MAX_STRING_LEN 256
@@ -226,28 +239,34 @@ typedef int pid_t;
 /* The timeout for waiting for messages */
 #define DEFAULT_TIMEOUT 1200
 
+/* The size of the server's internal read-write buffers */
+#define IOBUFSIZE 8192
+
+/* The number of header lines we will accept from a client */
+#define MAX_HEADERS 200
 
 /* ------------------------------ error types ------------------------------ */
 
-#define SERVER_VERSION "NCSA/1.1"
+#define SERVER_VERSION "NCSA/1.2"
 #define SERVER_PROTOCOL "HTTP/1.0"
 #define SERVER_SUPPORT "httpd@ncsa.uiuc.edu"
 
 #define DOCUMENT_FOLLOWS 200
 #define REDIRECT 302
+#define USE_LOCAL_COPY 304
 #define BAD_REQUEST 400
 #define AUTH_REQUIRED 401
 #define FORBIDDEN 403
 #define NOT_FOUND 404
 #define SERVER_ERROR 500
 #define NOT_IMPLEMENTED 501
-#define INCLUDE_ERROR 6991
 #define NO_MEMORY 6992
 
-#define METHODS 3
+#define METHODS 4
 #define M_GET 0
 #define M_PUT 1
 #define M_POST 2
+#define M_DELETE 3
 
 /* Object types */
 #define REDIRECT_URL -1
@@ -259,21 +278,35 @@ typedef int pid_t;
 #define OPT_INDEXES 1
 #define OPT_INCLUDES 2
 #define OPT_SYM_LINKS 4
-#define OPT_UNSET 8
-#define OPT_ALL (OPT_INDEXES|OPT_INCLUDES|OPT_SYM_LINKS)
+#define OPT_EXECCGI 8
+#define OPT_UNSET 16
+#define OPT_INCNOEXEC 32
+#define OPT_SYM_OWNER 64
+#define OPT_ALL (OPT_INDEXES|OPT_INCLUDES|OPT_SYM_LINKS|OPT_EXECCGI)
 
 #define OR_NONE 0
 #define OR_LIMIT 1
 #define OR_OPTIONS 2
 #define OR_FILEINFO 4
-#define OR_AUTHCFG 16
-#define OR_ALL (OR_LIMIT|OR_OPTIONS|OR_FILEINFO|OR_AUTHCFG)
+#define OR_AUTHCFG 8
+#define OR_INDEXES 16
+#define OR_ALL (OR_LIMIT|OR_OPTIONS|OR_FILEINFO|OR_AUTHCFG|OR_INDEXES)
 
+#define CGI_MAGIC_TYPE "application/x-httpd-cgi"
+#define INCLUDES_MAGIC_TYPE "text/x-server-parsed-html"
+
+/* For directory indexing */
+#define BY_PATH 0
+#define BY_TYPE 1
+#define BY_ENCODING 2
+
+#define FANCY_INDEXING 1
+#define ICONS_ARE_LINKS 2
+#define SCAN_HTML_TITLES 4
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <sys/socket.h>
@@ -305,6 +338,7 @@ typedef int pid_t;
 /* For access control */
 #define DENY_THEN_ALLOW 0
 #define ALLOW_THEN_DENY 1
+#define MUTUAL_FAILURE 2
 
 /* Struct shared by access and auth */
 typedef struct {
@@ -328,7 +362,7 @@ typedef struct {
     char *deny[METHODS][MAX_SECURITY];
 } security_data;
 
-/* Globals */
+/* Global, global, who's got the globals? */
 
 /* Server config */
 extern int standalone;
@@ -363,6 +397,7 @@ extern char access_name[MAX_STRING_LEN];
 extern char document_root[MAX_STRING_LEN];
 extern char default_type[MAX_STRING_LEN];
 extern char default_icon[MAX_STRING_LEN];
+extern char blank_icon[MAX_STRING_LEN];
 extern int fancy_indexing;
 extern char readme_fname[MAX_STRING_LEN];
 
@@ -396,14 +431,21 @@ extern int dirs_in_alias;
 extern char auth_line[MAX_STRING_LEN];
 extern int content_length;
 extern char content_type[MAX_STRING_LEN];
+extern char content_encoding[MAX_STRING_LEN];
 extern char location[MAX_STRING_LEN];
-extern char http_accept[HUGE_STRING_LEN];
+extern char **in_headers_env;
+
+/* http_log */
+extern FILE *error_log;
+extern int bytes_sent;
+extern int status;
+
 /* Function prototypes. */
 
 /* http_config */
 void read_config();
 void parse_htaccess(char *dir, char override, FILE *out);
-int get_pw(char *user, char *pw);
+int get_pw(char *user, char *pw, FILE *errors);
 int in_group(char *user, char *group);
 int init_group(char *grpfile, FILE *out);
 void kill_group();
@@ -418,44 +460,69 @@ void unmunge_name(char *name);
 
 /* http_request */
 void process_request(int in, FILE *out);
-void send_fd(FILE *f, FILE *fd, char *args);
+void send_fd(FILE *f, FILE *fd, void (*callback)());
 void send_fd_timed_out();
+int find_script(char *method, char *name, char *args, int in, FILE *out);
 
 /* http_get */
-void send_file(char *file,FILE *fd, char *args);
+void send_file(char *file,FILE *fd, char *path_args, char *args);
 void process_include(FILE *f, FILE *fd, char *incstring, char *args);
-void send_node(char *name, char *args, FILE *fd);
+void send_node(char *name, char *args, int in, FILE *fd);
 void process_get(int in, FILE *out, char *m, char *url, char *args);
 
+/* http_post */
+void post_node(char *name, char *args, int in, FILE *out);
+
 /* http_put */
-void get_node(char *name, char *args, int in, FILE *out);
+void put_node(char *name, char *args, int in, FILE *out);
+
+/* http_delete */
+void delete_node(char *name, char *args, int in, FILE *out);
 
 /* http_script */
 void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out);
-void exec_get_NCSA(char *path, char *args, FILE *fd);
+int cgi_stub(char *method, char *path, char *path_args, char *args,
+             char **env, struct stat *finfo, int in, FILE *out);
+void exec_get_NCSA(char *path, char *args, int in, FILE *fd);
 void exec_post_NCSA(char *path, char *args, int in, FILE *out);
+char **add_common_vars(char **env, FILE *out);
+void get_path_info(char *path, char *path_args, FILE *out, 
+                   struct stat *finfo);
 
 /* http_dir */
-extern void index_directory(char *name, FILE *fd);
-extern void add_icon(char *icon, char *ext, FILE *out);
-extern void add_desc(char *desc, char *ext, FILE *out);
-extern void add_ignore(char *ext, FILE *out);
-extern void init_indexing();
-extern void kill_indexing();
+void index_directory(char *name, FILE *fd);
+void add_icon(int type, char *icon, char *to, char *path, FILE *out);
+void add_alt(int type, char *alt, char *to, char *path, FILE *out);
+void add_desc(int type, char *desc, char *to, char *path, FILE *out);
+void add_ignore(char *ext, char *path, FILE *out);
+void add_header(char *name, char *path, FILE *out);
+void add_readme(char *name, char *path, FILE *out);
+void add_opts(char *optstr, char *path, FILE *out);
+void add_opts_int(int opts, char *path, FILE *out);
+void send_size(size_t size, FILE *fd);
+
+void init_indexing();
+void kill_indexing();
 
 /* http_log */
-void log_transaction(char *cmd_line);
+void record_request(char *cmd_line);
 void log_error(char *err);
+void log_error_noclose(char *err);
 void log_reason(char *reason, char *file);
 void die(int type, char *err_string, FILE *fd);
 void open_logs();
 void close_logs();
 void begin_http_header(FILE *fd, char *msg);
+void error_log2stderr();
+void log_transaction();
 
 /* http_mime */
-void get_mime_headers(int fd);
+void get_mime_headers(int fd, FILE *out);
+void init_header_vars();
 void send_http_header(FILE *fd);
 void set_content_type(char *fn);
+void set_last_modified(time_t t, FILE *out);
+void probe_content_type(char *fn);
 int scan_script_header(FILE *f, FILE *fd);
 void add_type(char *fn, char *t,FILE *out);
 void add_encoding(char *fn, char *t,FILE *out);
@@ -474,15 +541,25 @@ void kill_security();
 /* http_auth */
 void check_auth(security_data *s, int m, FILE *out);
 #ifdef PEM_AUTH
-int pem_decrypt(int sfd, char *req, FILE **out);
+int decrypt_request(int sfd, char *req, FILE **out);
 void htexit(int status, FILE *out);
 #endif
 
+/* http_include */
+void send_parsed_file(char *file, FILE *fd, char *path_args, char *args,
+                      int noexec);
+
 /* util */
+void chdir_file(char *file);
+void http2cgi(char *w);
+int later_than(char *l, char *i);
+int strcmp_match(char *str, char *exp);
+int is_matchexp(char *str);
 void strsubfirst(int start,char *dest, char *src);
 void make_full_path(char *src1,char *src2,char *dst);
 int is_directory(char *name);
 void getparents(char *name);
+void no2slash(char *name);
 uid_t uname2id(char *name);
 gid_t gname2id(char *name);
 int getline(char *s, int n, int f, unsigned int timeout);
@@ -492,6 +569,8 @@ void cfg_getword(char *word, char *line);
 void get_remote_host(int fd);
 char *get_time();
 char *gm_timestr_822(time_t t);
+char *ht_time(time_t t, char *fmt, int gmt);
+struct tm *get_gmtoff(long *tz);
 void make_dirstr(char *s, int n, char *d);
 int count_dirs(char *path);
 void strcpy_dir(char *d, char *s);
@@ -506,12 +585,14 @@ void uudecode(char *s,unsigned char *d,int dl);
 char *strdup (char *str);
 #endif
 #ifdef NEED_STRCASECMP
-char *strcasecmp(const char *s1, const char *s2);
+int strcasecmp(const char *s1, const char *s2);
 #endif
 #ifdef NEED_STRNCASECMP
-char *strncasecmp(const char *s1, const char *s2, int n);
+int strncasecmp(const char *s1, const char *s2, int n);
 #endif
 char *make_env_str(char *n, char *v, FILE *out);
+char **new_env(char **env, int to_add, int *pos);
+void free_env(char **env);
 int ind(char *s, char c);
 int rind(char *s, char c);
 void construct_url(char *d, char *s);
