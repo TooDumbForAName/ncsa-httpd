@@ -8,9 +8,8 @@ demonstration, etc.
 Documentation can also be found where you found this .tar file, in a file
 called httpd_docs.tar.Z.
 
-This version fixes several more possible security holes.
+The NCSA httpd Development Team   httpd@ncsa.uiuc.edu
 
- -- The NCSA HTTPD Server Development Group (httpd@void.ncsa.uiuc.edu)
 
 This code is in the public domain. Specifically, we give to the public
 domain all rights for future licensing of the source code, all resale
@@ -27,3 +26,84 @@ FOR THE SOFTWARE AND/OR DOCUMENTATION PROVIDED, INCLUDING, WITHOUT
 LIMITATION, WARRANTY OF MERCHANTABILITY AND WARRANTY OF FITNESS FOR A
 PARTICULAR PURPOSE.
 
+We'd like to thank code contributors for HTTPd:
+Rob McCool (robm@netscape.com) for versions up to 1.3
+Robert S. Thau (rst@ai.mit.edu)
+Roy T. Fielding (fielding@avron.ics.uci.edu)
+Brian Behlendorf (brian@wired.com)
+Harald Hanche-Olsen (hanche@imf.unit.no)
+kluft@amdahl.com
+David Robinson (drtr@ast.cam.ac.uk)
+Wietse Venema
+Keith Shafer (Keith.Shafer@SanDiegoCA.ATTGIS.COM)
+Kevin Steves (stevesk@mayfield.hp.com)
+
+And for Porting information/help:
+Sanj Kharbanda (sanj@wordsworth.com) 			QNX
+Jeffrey Ray Thieleke (thieleke@icaen.uiowa.edu)		NetBSD for m68k	
+Jim Jagielski (jim@jaguNET.com)				A/UX
+Morgan Davis (mdavis@cts.com)				SCO SVR e.2
+Steve Abatangle (sabat@velveeta.dts.harris.com)		Solaris 2.3
+Tom Rudnick (trudnick@ftc.nrcs.usda.gov)		AT&T SYSV 3.2
+Preston F. Crow (preston.crow@dancer.dartmouth.edu)	Ultrix 4.3,4.4
+Miles O'Neal (meo@pencom.com)				NeXT
+Kevin Steves (stevesk@mayfield.hp.com)			HPUX
+Vincent D. Skahan (vds7789@aw101.iasl.ca.boeing.com)	HP/Apollo DomainOS
+
+
+We'd like to thank the Beta Testers of HTTPd 1.4:
+
+Jim Jagielski (jim@jaguNET.com)
+Jonathan Magid (@calypso-2.oit.unc.edu) 
+Kevin Kadow (kadokev@ripco.com) 
+Alex Podlecki (a.podlecki@att.com) 
+Mike Baptiste (baptiste@bnr.ca)
+Rob Hartill (hartill@lanl.gov)
+Claude Lecommandeur (Claude.Lecommandeur@epfl.ch)
+Rich (legalize@xmission.com)
+Ryan Watkins (vamp@best.com)
+David J. Bianco (d.j.bianco@larc.nasa.gov) 
+Sean Harp (sharp@utk.edu)
+Stripes (stripes@uu.net) 
+Andrew Wilson (Andrew.Wilson@cm.cf.ac.uk) 
+Marc Baudoin (baudoin@ensta.fr
+Dave Cornejo (dave@dogwood.com)
+Charles Stephens (cfs@emory.edu)
+Carlos A. Pero (cpero@ncsa.uiuc.edu)
+Jeff Thieleke (thieleke@icaen.uiowa.edu)
+Jennifer Myers (jmyers@marigold.eecs.nwu.edu 
+Miles O'Neal (meo@pencom.com)
+Roger Rose (roger@neuromancer.ucr.edu)
+Preston Crow (crow@cs.dartmouth.edu)
+Tom Rataski (tom@winc.com)
+Steve Abatangle (sabat@dts.harris.com)
+Stuart Lynne (sl@wimsey.com)
+Mike Chang (machang@xmission.com)
+Jamie Cash (jrcash@unix.amherst.edu) 
+Brian Millett (bm1822@vlad.sbc.com)
+Robert S. Thau (rst@ai.mit.edu)
+R. E. McGrath (mcgrath@ncsa.uiuc.edu)
+Gerald Oskoboiny  (gerald@amisk.cs.ualberta.ca)
+dl (dl@hplyot.obspm.fr)
+Jim Fetters (fetters@neuromancer.ucr.edu)
+Gary Schrock (root@eyelab.psy.msu.edu)
+A. P. Harris (apharris@onShore.com)
+Bob Breedlove (bob@sssc.slg.eds.com)
+Chuck Musciano (chuck.musciano@melmac.corp.harris.com)
+Christopher Lewicki (chrisl@seds.lpl.arizona.edu)
+Roger May (rjm@inf.rl.ac.uk)
+Steven Grimm (koreth@hyperion.com)
+Maurizio Codogno (mau@beatles.cselt.stet.it)
+Charles F. Randall (cfrandal@iastate.edu)
+Barry Johnson (bjohnson@escape.com)
+Aris Stathakis (aris@sdd.com)
+Laurent Demailly (dl@hplyot.obspm.fr)
+James Sanford (jsanford@shadows.winternet.com)
+Victor Parada (vparada@inf.utfsm.cl)
+sanj (sanj@wordsworth.com)
+David Begley (d.begley@nepean.uws.edu.au)
+(skip@automatrix.com)
+David-Michael Lincke (dlincke@sgcl1.unisg.ch)
+Gioacchino La Vecchia (gio@di.unipi.it)
+Pete Ashdown (pashdown@xmission.com)
+Mubashir Cheema (cheema@sparco.com)

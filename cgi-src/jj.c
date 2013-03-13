@@ -7,7 +7,11 @@
 
 
 #include <stdio.h>
+#ifndef NO_STDLIB_H
 #include <stdlib.h>
+#else
+char *getenv();
+#endif
 
 #if 1
 #define JJ_FAX "JIMMY_JOHNS_3440603@fax.uiuc.edu"

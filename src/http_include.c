@@ -1,8 +1,15 @@
 /*
  * http_include.c: Handles the server-parsed HTML documents
+ *
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
  * 
- * Rob McCool
+ * Based on NCSA HTTPd 1.3 by Rob McCool
  * 
+ *  04-07-95 blong
+ *	Fixes bug where substrings of the environment variable might be 
+ *	included first as suggested by David Robinson (drtr@ast.cam.ac.uk)
  */
 
 #include "httpd.h"
@@ -178,7 +185,8 @@ int send_included_file(char *file, FILE *out, char **env, char *fn)
 {
     FILE *f;
     struct stat finfo;
-    int allow;char op,i;
+    int allow;
+    char op;
 
     if(stat(file,&finfo) == -1)
         return -1;
@@ -198,8 +206,8 @@ int send_included_file(char *file, FILE *out, char **env, char *fn)
         if(!(f=fopen(file,"r")))
             return -1;
         send_fd(f,out,NULL);
-        fclose(f);
     }
+    fclose(f);
     return 0;
 }
 
@@ -253,11 +261,12 @@ int handle_echo(FILE *in, FILE *out, char *file, char *error, char **env) {
         if(!(tag_val = get_tag(in,tag)))
             return 1;
         if(!strcmp(tag,"var")) {
-            int x,i;
+            int x,i,len;
 
+	    len = strlen(tag_val); 
             for(x=0;env[x] != NULL; x++) {
                 i = ind(env[x],'=');
-                if(!strncmp(env[x],tag_val,i)) {
+                if((i == len) && !(strncmp(env[x],tag_val,i))) {
                     bytes_sent += fprintf(out,"%s",&env[x][i+1]);
                     break;
                 }
@@ -276,7 +285,7 @@ int handle_echo(FILE *in, FILE *out, char *file, char *error, char **env) {
 
 int include_cgi(char *s, char *pargs, char *args, char **env, FILE *out) 
 {
-    char *argp,op,d[HUGE_STRING_LEN];
+    char op,d[HUGE_STRING_LEN];
     int allow,check_cgiopt;
     struct stat finfo;
 
@@ -326,24 +335,24 @@ int include_cmd(char *s, char *pargs, char *args, char **env, FILE *out) {
         char *argv0;
 
         if(pargs[0] || args[0]) {
-            if(!(env = new_env(env,4,&x)))
+            if(!(in_headers_env = new_env(in_headers_env,4,&x)))
                 return -1;
             if(pargs[0]) {
                 char p2[HUGE_STRING_LEN];
                 
                 escape_shell_cmd(pargs);
-                env[x++] = make_env_str("PATH_INFO",pargs,out);
+                in_headers_env[x++] = make_env_str("PATH_INFO",pargs,out);
                 strcpy(p2,pargs);
                 translate_name(p2,out);
-                env[x++] = make_env_str("PATH_TRANSLATED",p2,out);
+                in_headers_env[x++] = make_env_str("PATH_TRANSLATED",p2,out);
             }
             if(args[0]) {
-                env[x++] = make_env_str("QUERY_STRING",args,out);
+                in_headers_env[x++] = make_env_str("QUERY_STRING",args,out);
                 unescape_url(args);
                 escape_shell_cmd(args);
-                env[x++] = make_env_str("QUERY_STRING_UNESCAPED",args,out);
+                in_headers_env[x++] = make_env_str("QUERY_STRING_UNESCAPED",args,out);
             }
-            env[x] = NULL;
+            in_headers_env[x] = NULL;
         }
 
         close(p[0]);
@@ -354,7 +363,7 @@ int include_cmd(char *s, char *pargs, char *args, char **env, FILE *out) {
         error_log2stderr();
         if(!(argv0 = strrchr(SHELL_PATH,'/')))
             argv0=SHELL_PATH;
-        if(execle(SHELL_PATH,argv0,"-c",s,(char *)0,env) == -1) {
+        if(execle(SHELL_PATH,argv0,"-c",s,(char *)0,in_headers_env) == -1) {
             fprintf(stderr,"httpd: exec of %s failed, errno is %d\n",
                     SHELL_PATH,errno);
             exit(1);
@@ -424,14 +433,9 @@ int handle_config(FILE *in, FILE *out, char *file, char *error, char *tf,
         else if(!strcmp(tag,"timefmt")) {
             strcpy(tf,tag_val);
             /* Replace DATE* and LAST_MODIFIED (they should be first) */
-            free(env[0]);
-            env[0] = make_env_str("DATE_LOCAL",ht_time(date,tf,0),out);
-            free(env[1]);
-            env[1] = make_env_str("DATE_GMT",ht_time(date,tf,1),out);
-            if(!strncmp(env[2],"LAST_MODIFIED",13)) {
-                free(env[2]);
-                env[2] = make_env_str("LAST_MODIFIED",ht_time(lm,tf,0),out);
-            }
+	    replace_env_str(in_headers_env, "DATE_LOCAL", ht_time(date,tf,0), out);
+	    replace_env_str(in_headers_env, "DATE_GMT", ht_time(date,tf,1), out);
+	    replace_env_str(in_headers_env, "LAST_MODIFIED", ht_time(lm,tf,0), out);
         }
         else if(!strcmp(tag,"sizefmt")) {
             if(!strcmp(tag_val,"bytes"))
@@ -497,8 +501,7 @@ int find_file(FILE *out, char *file, char *directive, char *tag,
 }
 
 
-int handle_fsize(FILE *in, FILE *out, char *file, char *error, int sizefmt,
-                 char **env) 
+int handle_fsize(FILE *in, FILE *out, char *file, char *error, int sizefmt) 
 {
     char tag[MAX_STRING_LEN];
     char *tag_val;
@@ -531,8 +534,7 @@ int handle_fsize(FILE *in, FILE *out, char *file, char *error, int sizefmt,
     }
 }
 
-int handle_flastmod(FILE *in, FILE *out, char *file, char *error, char *tf,
-                    char **env) 
+int handle_flastmod(FILE *in, FILE *out, char *file, char *error, char *tf) 
 {
     char tag[MAX_STRING_LEN];
     char *tag_val;
@@ -558,7 +560,7 @@ void send_parsed_content(char *file, FILE *f, FILE *fd,
                          char *path_args, char *args,
                          char **env,int noexec)
 {
-    char directive[MAX_STRING_LEN], error[MAX_STRING_LEN], c;
+    char directive[MAX_STRING_LEN], error[MAX_STRING_LEN];
     char timefmt[MAX_STRING_LEN], errstr[MAX_STRING_LEN];
     int ret, sizefmt;
 
@@ -589,9 +591,9 @@ void send_parsed_content(char *file, FILE *f, FILE *fd,
             else if(!strcmp(directive,"echo"))
                 ret=handle_echo(f,fd,file,error,env);
             else if(!strcmp(directive,"fsize"))
-                ret=handle_fsize(f,fd,file,error,sizefmt,env);
+                ret=handle_fsize(f,fd,file,error,sizefmt);
             else if(!strcmp(directive,"flastmod"))
-                ret=handle_flastmod(f,fd,file,error,timefmt,env);
+                ret=handle_flastmod(f,fd,file,error,timefmt);
             else {
                 sprintf(errstr,"httpd: unknown directive %s in parsed doc %s",
                         directive,file);
@@ -615,7 +617,6 @@ void send_parsed_file(char *file, FILE *fd, char *path_args, char *args,
                       int noexec) 
 {
     FILE *f;
-    char **env;
 
     if(!(f=fopen(file,"r"))) {
         log_reason("file permissions deny server access",file);
@@ -625,18 +626,22 @@ void send_parsed_file(char *file, FILE *fd, char *path_args, char *args,
     strcpy(content_type,"text/html");
     if(!assbackwards)
         send_http_header(fd);
-    if(header_only)
+    if(header_only) {
+	fclose(f);
         return;
+    }
 
     /* Make sure no children inherit our buffers */
     fflush(fd);
     assbackwards = 1; /* make sure no headers get inserted anymore */
     alarm(timeout);
 
-    env = add_include_vars(in_headers_env,file,path_args,args,
+    in_headers_env = add_include_vars(in_headers_env,file,path_args,args,
                            DEFAULT_TIME_FORMAT,fd);
-    env = add_common_vars(env,fd);
 
-    send_parsed_content(file,f,fd,path_args,args,env,noexec);
-    free_env(env);
+    in_headers_env = add_common_vars(in_headers_env,fd);
+
+    send_parsed_content(file,f,fd,path_args,args,in_headers_env,noexec);
+    free_env(in_headers_env);
+    in_headers_env = NULL;
 }

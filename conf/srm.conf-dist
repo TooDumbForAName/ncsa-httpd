@@ -4,7 +4,7 @@
 # See the tutorials at http://hoohoo.ncsa.uiuc.edu/docs/tutorials/ for
 # more information.
 
-# Rob (robm@ncsa.uiuc.edu)
+# NCSA httpd (httpd@ncsa.uiuc.edu)
 
 
 # DocumentRoot: The directory out of which you will serve your
@@ -107,3 +107,20 @@ ScriptAlias /cgi-bin/ /usr/local/etc/httpd/cgi-bin/
 
 #AddType text/x-server-parsed-html .shtml
 #AddType application/x-httpd-cgi .cgi
+
+# If you want to have files/scripts sent instead of the built-in version
+# in case of errors, uncomment the following lines and set them as you
+# will.  Note: scripts must be able to be run as if the were called 
+# directly (in ScriptAlias directory, for instance)
+
+# 302 - REDIRECT 
+# 400 - BAD_REQUEST 
+# 401 - AUTH_REQUIRED 
+# 403 - FORBIDDEN 
+# 404 - NOT_FOUND 
+# 500 - SERVER_ERROR 
+# 501 - NOT_IMPLEMENTED 
+
+#ErrorDocument 302 /cgi-bin/redirect.cgi
+#ErrorDocument 500 /errors/server.html
+#ErrorDocument 403 /errors/forbidden.html

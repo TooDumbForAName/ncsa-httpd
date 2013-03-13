@@ -51,6 +51,7 @@ char *fmakeword(FILE *f, char stop, int *cl) {
         if((word[ll] == stop) || (feof(f)) || (!(*cl))) {
             if(word[ll] != stop) ll++;
             word[ll] = '\0';
+	    word = (char *) realloc(word, ll+1);
             return word;
         }
         ++ll;

@@ -1,12 +1,24 @@
 /*
  * http_mime.c: Sends/gets MIME headers for requests
  * 
- * Rob McCool
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
+ *
+ * Based on NCSA HTTPd 1.3 by Rob McCool
  * 
+ * 
+ * 03/19/95 blong
+ *      Added set_stat_line as part of making user config error messages work
+ *      The correct status line should now be sent back
+ *
+ * 04/20/95 blong
+ *	Added a modified "B18" from apache patches by Rob Hartill
  */
 
 
 #include "httpd.h"
+#include "new.h"
 
 struct mime_ext {
     char *ext;
@@ -24,6 +36,8 @@ struct mime_ext {
 struct mime_ext *types[27];
 struct mime_ext *forced_types;
 struct mime_ext *encoding_types;
+struct mime_ext *Saved_Forced;
+struct mime_ext *Saved_Encoding;
 
 int content_length;
 char content_type[MAX_STRING_LEN];
@@ -34,11 +48,15 @@ static char last_modified[MAX_STRING_LEN];
 
 char auth_line[MAX_STRING_LEN];
 
-char *out_headers;
-char **in_headers_env;
-char *status_line;
+char *out_headers = NULL;
+char **in_headers_env = NULL;
+char *status_line = NULL;
 char ims[MAX_STRING_LEN]; /* If-modified-since */
 
+extern FILE *agent_log;
+extern FILE *referer_log;
+extern char referer_ignore[MAX_STRING_LEN];
+char referer[HUGE_STRING_LEN];
 
 void hash_insert(struct mime_ext *me) {
     register int i = hash(me->ext[0]);
@@ -98,7 +116,7 @@ void init_mime() {
     char l[MAX_STRING_LEN],w[MAX_STRING_LEN],*ct;
     FILE *f;
     register struct mime_ext *me;
-    register int x,y;
+    register int x;
 
     if(!(f = fopen(types_confname,"r"))) {
         fprintf(stderr,"httpd: could not open mime types file %s\n",
@@ -142,16 +160,16 @@ void dump_types() {
     struct mime_ext *p;
     register int x;
 
-    for(x=0;x<27;x++) {
+/*    for(x=0;x<27;x++) {
         p=types[x];
         while(p) {
-            printf("ext %s: %s\n",p->ext,p->ct);
+            fprintf(stderr,"ext %s: %s\n",p->ext,p->ct);
             p=p->next;
         }
-    }
+    } */
     p=forced_types;
     while(p) {
-        printf("file %s: %s\n",p->ext,p->ct);
+        fprintf(stderr,"file %s: %s\n",p->ext,p->ct);
         p=p->next;
     }
 }
@@ -165,7 +183,10 @@ void find_ct(char *file, int store_encoding) {
     struct mime_ext *p;
     char fn[MAX_STRING_LEN];
 
-    strcpy(fn,file);
+    lim_strcpy(fn,file, MAX_STRING_LEN);
+/*    l = strlen(fn);
+    if (fn[l-1] == '/') 
+      fn[l-1] = '\0'; */
     if((i=rind(fn,'.')) >= 0) {
         ++i;
         l=strlen(fn);
@@ -204,7 +225,9 @@ void find_ct(char *file, int store_encoding) {
     }
 
     if((i = rind(fn,'.')) < 0) {
-        strcpy(content_type,default_type);
+	if (local_default_type[0] != '\0') 
+	  strcpy(content_type,local_default_type);
+         else strcpy(content_type,default_type);
         return;
     }
     ++i;
@@ -217,7 +240,9 @@ void find_ct(char *file, int store_encoding) {
         }
         p=p->next;
     }
-    strcpy(content_type,default_type);
+    if (local_default_type[0] != '\0') 
+      strcpy(content_type,local_default_type);
+     else strcpy(content_type,default_type);
 }
 
 
@@ -239,14 +264,37 @@ int scan_script_header(FILE *f, FILE *fd) {
         if(getline(w,MAX_STRING_LEN-1,fileno(f),timeout))
             die(SERVER_ERROR,"httpd: malformed header from script",fd);
 
-        if(w[0] == '\0') return is_url(location);
+/* Always return zero, so as not to cause redirect+sleep3+kill */
+        if(w[0] == '\0') {
+	    if (content_type[0] == '\0') {
+	       if (location[0] != '\0') {
+		 strcpy(content_type,"text/html");
+	       } else {
+	         if (local_default_type[0] != '\0')
+		   strcpy(content_type,local_default_type);
+	          else strcpy(content_type,default_type);
+	       }
+            }
+	    return 0;
+        }                            
         if(!(l = strchr(w,':')))
             l = w;
         *l++ = '\0';
-        if(!strcasecmp(w,"Content-type"))
+        if(!strcasecmp(w,"Content-type")) {
+	  /* Thanks Netscape for showing this bug to everyone */
+	  /* delete trailing whitespace, esp. for "server push" */
+	  char *endp = l + strlen(l) - 1;
+	  while ((endp > l) && isspace(*endp)) *endp-- = '\0';
             sscanf(l,"%s",content_type);
-        else if(!strcasecmp(w,"Location"))
-            sscanf(l,"%s",location);
+        } 
+        else if(!strcasecmp(w,"Location")) {
+	/* If we don't already have a status line, make one */
+	    if (!&status_line[0]) {
+      	      status = 302;
+      	      set_stat_line();
+	    }
+      	    sscanf(l,"%s",location);
+	} 
         else if(!strcasecmp(w,"Status")) {
             for(p=0;isspace(l[p]);p++);
             sscanf(&l[p],"%d",&status);
@@ -272,6 +320,40 @@ int scan_script_header(FILE *f, FILE *fd) {
             }
         }
     }
+}
+
+
+
+/* Should remove all the added types from .htaccess files when the 
+   child sticks around */
+
+void reset_mime_vars() {
+  struct mime_ext *mimes,*tmp;
+
+  mimes = forced_types;
+  tmp = mimes;
+  while (mimes != Saved_Forced) {
+    mimes = mimes->next;
+    free(tmp->ext);
+    free(tmp->ct);
+    free(tmp);
+    tmp = mimes;
+  }
+
+  forced_types = Saved_Forced;
+
+  mimes = encoding_types;
+  tmp = mimes;
+
+  while (mimes != Saved_Encoding) {
+    mimes = mimes->next;
+    free(tmp->ext);
+    free(tmp->ct);
+    free(tmp);
+    tmp = mimes;
+  }
+
+  encoding_types = Saved_Encoding;
 }
 
 void add_type(char *fn, char *t, FILE *out) {
@@ -306,7 +388,7 @@ void set_content_length(int l) {
     content_length = l;
 }
 
-void set_last_modified(time_t t, FILE *out) {
+int set_last_modified(time_t t, FILE *out) {
     struct tm *tms;
     char ts[MAX_STRING_LEN];
 
@@ -315,13 +397,17 @@ void set_last_modified(time_t t, FILE *out) {
     strcpy(last_modified,ts);
 
     if(!ims[0])
-        return;
+        return 0;
 
     if(later_than(tms, ims))
-        die(USE_LOCAL_COPY,NULL,out);
+        return die(USE_LOCAL_COPY,NULL,out);
+
+    return 0;
 }
 
-void init_header_vars() {
+void init_header_vars() 
+{
+    referer[0] = '\0';
     content_type[0] = '\0';
     last_modified[0] = '\0';
     content_length = -1;
@@ -329,13 +415,20 @@ void init_header_vars() {
     content_encoding[0] = '\0';
     location[0] = '\0';
     ims[0] = '\0';
+    if (status_line != NULL) free(status_line);
     status_line = NULL;
+    if (out_headers != NULL) free(out_headers);
     out_headers = NULL;
-    in_headers_env = NULL;
+
+    if (in_headers_env != NULL) {
+       free_env(in_headers_env);
+       in_headers_env = NULL;
+    } 
+    
 }
 
 int merge_header(char *h, char *v, FILE *out) {
-    register int x,l,lt;
+    register int l,lt;
     char **t;
 
     for(l=0;h[l];++l);
@@ -357,7 +450,7 @@ int merge_header(char *h, char *v, FILE *out) {
     return 0;
 }
 
-void get_mime_headers(int fd, FILE *out) {
+void get_mime_headers(int fd, FILE *out, char* url) {
     char w[MAX_STRING_LEN];
     char l[MAX_STRING_LEN];
     int num_inh, num_processed;
@@ -389,6 +482,17 @@ void get_mime_headers(int fd, FILE *out) {
             sscanf(l,"%d",&content_length);
             continue;
         }
+        if(!strcasecmp(w,"User-agent")) {
+            fprintf(agent_log, "%s\n", l);
+	    fflush(agent_log);
+        }
+        if(!strcasecmp(w,"Referer")) {
+	    strcpy(referer,l);
+	    if ((!strlen(referer_ignore)) || (!strstr(l,referer_ignore))){
+		fprintf(referer_log, "%s -> %s\n", l, url);
+		fflush(referer_log);
+	    }
+        }
         if(!strcasecmp(w,"If-modified-since"))
             strcpy(ims,l);
 
@@ -417,18 +521,56 @@ void get_mime_headers(int fd, FILE *out) {
 void dump_default_header(FILE *fd) {
     fprintf(fd,"Date: %s%c",gm_timestr_822(time(NULL)),LF);
     fprintf(fd,"Server: %s%c",SERVER_VERSION,LF);
-    fprintf(fd,"MIME-version: 1.0%c",LF);
+   
+    if (annotation_server[0])
+	fprintf(fd,"Annotations-cgi: %s%c",annotation_server,LF);
+
+/* Not part of HTTP spec, removed. */
+/*    fprintf(fd,"MIME-version: 1.0%c",LF); */
 }
 
+char* set_stat_line() {
+    if (status_line) free(status_line);
+    switch (status) {
+    case 302:
+	status_line = strdup((char *)StatLine302);
+	break;
+    case 304:
+	status_line = strdup((char *)StatLine304);
+	break;
+    case 400:
+	status_line = strdup((char *)StatLine400);
+	break;
+    case 401:
+	status_line = strdup((char *)StatLine401);
+	break;
+    case 403:
+	status_line = strdup((char *)StatLine403);
+	break;
+    case 404:
+	status_line = strdup((char *)StatLine404);
+	break;
+    case 500:
+	status_line = strdup((char *)StatLine500);
+	break;
+    case 501:
+	status_line = strdup((char *)StatLine501);
+	break;
+    default:
+	status_line = strdup((char *)StatLine200);
+	break;
+    }
+    return status_line;
+}
+	
 void send_http_header(FILE *fd) {
     if(!status_line) {
         if(location[0]) {
             status = 302;
-            status_line = "302 Found";
+	    status_line = strdup((char *)StatLine302);
         }
         else {
-            status = 200;
-            status_line = "200 OK";
+	    set_stat_line();
         }
     }            
     begin_http_header(fd,status_line);
@@ -445,4 +587,5 @@ void send_http_header(FILE *fd) {
     if(out_headers)
         fprintf(fd,"%s",out_headers);
     fprintf(fd,"%c",LF);
+    fflush(fd);
 }

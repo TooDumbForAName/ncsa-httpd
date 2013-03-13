@@ -9,16 +9,16 @@
 **
 ** 11/13/93: Rob McCool, robm@ncsa.uiuc.edu
 **
-** Rewrote configuration stuff for NCSA /htbin script
+** 1.3 : Rewrote configuration stuff for NCSA /htbin script
 **
 ** 12/05/93: Rob McCool, robm@ncsa.uiuc.edu
 ** 
-** Made CGI/1.0 compliant.
+** 1.4 : Made CGI/1.0 compliant.
 **
 ** 06/27/94: Chris Hyams, cgh@rice.edu
 **          Based on an idea by Rick Troth (troth@rice.edu)
-**
-** Imagemap configuration file in PATH_INFO.  Backwards compatible.
+** 
+** 1.5 : Imagemap configuration file in PATH_INFO.  Backwards compatible.
 **
 **  Old-style lookup in imagemap table:
 **    <a href="http://foo.edu/cgi-bin/imagemap/oldmap">
@@ -31,28 +31,30 @@
 **
 ** 07/11/94: Craig Milo Rogers, Rogers@ISI.Edu
 **
-** Added the "point" datatype.  The nearest point wins.  Overrides "default".
+** 1.6 : Added "point" datatype: the nearest point wins.  Overrides "default".
 **
 ** 08/28/94: Carlos Varela, cvarela@ncsa.uiuc.edu
 **
-** Fixed bug:  virtual URLs are now understood.
-** Better error reporting when not able to open configuration file.
+** 1.7 : Fixed bug:  virtual URLs are now understood.
+**       Better error reporting when not able to open configuration file.
 **
+** 03/07/95: Carlos Varela, cvarela@ncsa.uiuc.edu
 **
-** 04/13/95: Stanford S. Guillory, guillory@ncsa.uiuc.edu
+** 1.8 : Fixed bug (strcat->sprintf) when reporting error.
+**       Included getline() function from util.c in NCSA httpd distribution.
 **
-** Fixed a couple of potential buffer overflow problems when copying
-** translated path to configuration file name. Also got rid of a strcat
-** unto a literal string. Whoa!
 */
 
 #include <stdio.h>
 #include <string.h>
-#ifndef pyr
+#if !defined(pyr) && !defined(NO_STDLIB_H)
 #include <stdlib.h>
 #else
+#include <sys/types.h>
 #include <ctype.h>
+char *getenv();
 #endif
+#include <sys/types.h>
 #include <sys/stat.h>
 
 #define CONF_FILE "/usr/local/etc/httpd/conf/imagemap.conf"
@@ -61,12 +63,14 @@
 #define MAXVERTS 100
 #define X 0
 #define Y 1
+#define LF 10
+#define CR 13
 
 int isname(char);
 
 int main(int argc, char **argv)
 {
-    char input[MAXLINE], *mapname, def[MAXLINE], conf[MAXLINE];
+    char input[MAXLINE], *mapname, def[MAXLINE], conf[MAXLINE], errstr[MAXLINE];
     double testpoint[2], pointarray[MAXVERTS][2];
     int i, j, k;
     FILE *fp;
@@ -94,19 +98,13 @@ int main(int argc, char **argv)
      * we get the translated path, and skip reading the configuration file.
      */
     if (strchr(mapname,'/')) {
-	/* Another security fix courtesy of SSG 4/13/95 Thanks CERN! */
-	char* path = getenv("PATH_TRANSLATED");
-	if (strlen(path) >= MAXLINE)
-	    servererr("Can't support paths longer than 500 characters!");
-	strcpy(conf, path);
-	goto openconf;
+      strcpy(conf,getenv("PATH_TRANSLATED"));
+      goto openconf;
     }
     
-    if ((fp = fopen(CONF_FILE, "r")) == NULL) {
-	/* dude was catting literal string! SSG 4/13/95 */
-	char buf[100];  /* size is known to be < 100 SSG 4/13/95 */
-	sprintf (buf, "Couldn't open configuration file: %s", CONF_FILE);
-        servererr(buf);
+    if ((fp = fopen(CONF_FILE, "r")) == NULL){
+        sprintf(errstr, "Couldn't open configuration file: %s", CONF_FILE);
+        servererr(errstr);
     }
 
     while(!(getline(input,MAXLINE,fp))) {
@@ -126,16 +124,12 @@ int main(int argc, char **argv)
      * name exists, jumping to the opening of the map file if it does.
      */
     if(feof(fp)) {
-	struct stat sbuf;
-	/* Another security fix courtesy of SSG 4/13/95 Thanks CERN! */
-	char* path = getenv("PATH_TRANSLATED");
-	if (strlen(path) >= MAXLINE)
-	    servererr("Can't support paths longer than 500 characters!");
-	strcpy(conf, path);
-	if (!stat(conf,&sbuf) && ((sbuf.st_mode & S_IFMT) == S_IFREG))
-	    goto openconf;
-	else
-	    servererr("Map not found in configuration file.");
+      struct stat sbuf;
+      strcpy(conf,getenv("PATH_TRANSLATED"));
+      if (!stat(conf,&sbuf) && ((sbuf.st_mode & S_IFMT) == S_IFREG))
+	goto openconf;
+      else
+	servererr("Map not found in configuration file.");
     }
     
   found:
@@ -147,11 +141,9 @@ int main(int argc, char **argv)
     conf[j] = '\0';
 
   openconf:
-    if ((fp = fopen(conf, "r")) == NULL) {
-	/* dude was catting literal string! SSG 4/13/95 */
-	char buf[600];  /* size is known to be < 600 SSG 4/13/95 */
-	sprintf (buf, "Couldn't open configuration file: %s", conf);
-        servererr(buf);
+    if(!(fp=fopen(conf,"r"))){
+	sprintf(errstr, "Couldn't open configuration file: %s", conf);
+        servererr(errstr);
     }
 
     while(!(getline(input,MAXLINE,fp))) {
@@ -342,5 +334,22 @@ servererr(char *msg)
 int isname(char c)
 {
         return (!isspace(c));
+}
+
+int getline(char *s, int n, FILE *f) {
+    register int i=0;
+
+    while(1) {
+        s[i] = (char)fgetc(f);
+
+        if(s[i] == CR)
+            s[i] = fgetc(f);
+
+        if((s[i] == 0x4) || (s[i] == LF) || (i == (n-1))) {
+            s[i] = '\0';
+            return (feof(f) ? 1 : 0);
+        }
+        ++i;
+    }
 }
 

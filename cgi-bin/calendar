@@ -8,7 +8,7 @@ echo
 if [ -x $CAL ]; then
 	if [ $# = 0 ]; then
 		cat << EOM
-<TITLE>Calendar</TITLE>
+<HTML><HEAD><TITLE>Calendar</TITLE></HEAD><BODY>
 <H1>Calendar</H1>
 
 <ISINDEX>
@@ -20,9 +20,11 @@ EOM
 	else 
 		echo \<PRE\>
 		$CAL $*
+		echo \</PRE\>
 	fi
 else
 	echo Cannot find cal on this system.
 fi
-
-
+cat << EOM
+</BODY></HTML>
+EOM

@@ -1,5 +1,9 @@
 #include <stdio.h>
+#ifndef NO_STDLIB_H
 #include <stdlib.h>
+#else
+char *getenv();
+#endif
 
 #define	LF	10
 #define HTML_BREAK	printf("<P>%c", LF);

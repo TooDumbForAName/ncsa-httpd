@@ -8,7 +8,7 @@ echo
 if [ -x $FINGER ]; then
 	if [ $# = 0 ]; then
 		cat << EOM
-<TITLE>Finger Gateway</TITLE>
+<HTML><HEAD><TITLE>Finger Gateway</TITLE></HEAD><BODY>
 <H1>Finger Gateway</H1>
 
 <ISINDEX>
@@ -19,8 +19,11 @@ EOM
 	else
 		echo \<PRE\>
 		$FINGER "$*"
+		echo \</PRE\>
 	fi
 else
 	echo Cannot find finger on this system.
 fi
-
+cat << EOM
+</BODY></HTML>
+EOM

@@ -1,8 +1,17 @@
 /*
  * http_alias.c: Stuff for dealing with directory aliases
  * 
- * Rob McCool
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
+ *
+ * Based on NCSA HTTPd 1.3 by Rob McCool
  * 
+ *  04-06-95 blong
+ * 	Added Saved_ variables to allow reset of aliases to configured 
+ *	only.  save_aliases is called from http_config, and 
+ *	reset_to_saved_alias is called in the initialization of 
+ *	transactions.
  */
 
 
@@ -14,8 +23,10 @@ typedef struct {
     int script;
 } alias;
 
+static int Saved_num_alias = 0;
 static int num_a = 0;
 static alias a[MAX_ALIASES];
+static int Saved_num_redirect = 0;
 static int num_v = 0;
 static alias v[MAX_ALIASES];
 
@@ -27,7 +38,19 @@ void reset_aliases() {
     num_v = 0;
 }
 
+void save_aliases() {
+    Saved_num_alias = num_a;
+    Saved_num_redirect = num_v;
+}
+
+void reset_to_saved_aliases() {
+    num_a = Saved_num_alias;
+    num_v = Saved_num_redirect;
+}
+
 void add_alias(char *f, char *r, int is_script) {
+    if (num_a >= MAX_ALIASES)
+      num_a = Saved_num_alias;
     strcpy(a[num_a].fake,f);
 
     a[num_a].script = is_script;
@@ -39,14 +62,17 @@ void add_alias(char *f, char *r, int is_script) {
 }
 
 void add_redirect(char *f, char *url) {
+    if (num_v >= MAX_ALIASES)
+      num_v = Saved_num_redirect;
     strcpy(v[num_v].fake,f);
     strcpy(v[num_v++].real,url);
 }
 
+char fake[MAX_STRING_LEN + 2],real[MAX_STRING_LEN],dname[HUGE_STRING_LEN];
+
 int translate_name(char *name, FILE *fd) {
     register int x,l;
     char w[MAX_STRING_LEN];
-    char t[MAX_STRING_LEN];
     struct passwd *pw;
 
     getparents(name);
@@ -69,8 +95,6 @@ int translate_name(char *name, FILE *fd) {
     }
 
     if((user_dir[0]) && (name[0] == '/') && (name[1] == '~')) {
-        char fake[MAX_STRING_LEN],real[MAX_STRING_LEN],dname[MAX_STRING_LEN];
-
         strcpy(dname,&name[2]);
         getword(w,dname,'/');
         if(!(pw=getpwnam(w)))

@@ -1,7 +1,11 @@
 /*
  * http_delete.c: Handles DELETE
  * 
- * Rob McCool
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
+ *
+ * Based on NCSA HTTPd 1.3 by Rob McCool
  * 
  */
 
@@ -38,7 +42,6 @@ void handle_delete(char *name, char *args, int in, FILE *out) {
 
 
 void delete_node(char *name, char *args, int in, FILE *out) {
-    struct stat finfo;
     int s;
 
     s=translate_name(name,out);

@@ -7,7 +7,7 @@
 # what they do, if you are unsure consult the online docs. You have been
 # warned.  
 
-# Rob McCool (comments, questions to httpd@ncsa.uiuc.edu)
+# NCSA httpd (comments, questions to httpd@ncsa.uiuc.edu)
 
 # ServerType is either inetd, or standalone.
 
@@ -19,6 +19,18 @@ ServerType standalone
 # need httpd to be run as root initially.
 
 Port 80
+
+# StartServers: The number of servers to launch at startup.  Must be
+# compiled without the NO_PASS compile option
+
+StartServers 5
+
+# MaxServers: The number of servers to launch until mimic'ing the 1.3
+# scheme (new server for each connection).  These servers will stay around
+# until the server is restarted.  They will be reused as needed, however.
+# See the documentation on hoohoo.ncsa.uiuc.edu for more information.
+
+MaxServers 20
 
 # If you wish httpd to run as a different user or group, you must run
 # httpd as root initially and it will switch.  
@@ -47,6 +59,22 @@ ErrorLog logs/error_log
 # start with /, ServerRoot is prepended to it.
 
 TransferLog logs/access_log
+
+# AgentLog: The location of the agent log file.  If this does not start
+# with /, ServerRoot is prepended to it.
+
+AgentLog logs/agent_log
+
+# RefererLog: The location of the referer log file.  If this does not
+# start with /, ServerRoot is prepended to it.
+
+RefererLog logs/referer_log
+
+# RefererIgnore: If you don't want to keep track of links from certain
+# servers (like your own), place it here.  If you want to log them all,
+# keep this line commented.
+
+#RefererIgnore servername
 
 # PidFile: The file the server should log its pid to
 PidFile logs/httpd.pid

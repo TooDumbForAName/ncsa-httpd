@@ -1,12 +1,104 @@
 /*
- * str.c: string utility things
+ * util.c: string utility things, and other utilities
  * 
- * 3/21/93 Rob McCool
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
+ *
+ * 03-23-93  Rob McCool
+ * 	Original code up to version 1.3 from Rob McCool
+ *
+ * 02-16-95  cvarela
+ *	Fixed stack hole in strsubfirst
+ *
+ * 03-06-95  blong
+ *	Added inststr from bdflush-1.5 for Linux to set the name of
+ *	the running processes
+ *
+ * 03-10-95  blong
+ *	Added buffered getline for all but POST requests as suggested by
+ *	Robert S. Thau (rst@ai.mit.edu)
+ *
+ * 03-20-95  blong & cvarela
+ *	Fixed make_env_str so that it doesn't modify the pointers
+ *
+ * 04-03-95  blong
+ *	May have fixed problems (esp. under Solaris 2.3) with playing
+ *	with library memory in get_remote_name
+ *
+ * 04-13-95  guillory
+ *	added strncpy_dir that limits the length of a directory copy
+ *	also added strncpy for same reason
+ *
+ * 04-29-95  blong
+ *	added patch by Kevin Steves (stevesk@mayfield.hp.com) for inststr
+ *	under HPUX which uses the pstat command
  * 
+ * 06-01-95  blong
+ *	added patch by Vince Skahan (vds7789@aw101.iasl.ca.boeing.com)
+ *	to fix Apollo DomainOS timezone handling
  */
 
 
 #include "httpd.h"
+#ifdef APOLLO
+# include <sys/time.h>
+#endif
+#include <setjmp.h>
+#ifdef HPUX
+# include <sys/pstat.h>
+#endif
+
+extern JMP_BUF jmpbuffer;
+extern char** environ;
+
+/* modified from bdflush-1.5 for Linux source code 
+   This is used to set the name of the running process */
+void inststr(char *dst[], int argc, char *src)
+{
+
+#ifdef HPUX
+ /*
+  * 4/29/95 Kevin Steves <stevesk@mayfield.hp.com>
+  * Use pstat(PSTAT_SETCMD) on HP-UX.
+  */
+     union pstun pst;
+ 
+     pst.pst_command = src;
+     pstat(PSTAT_SETCMD, pst, 0, 0, 0);
+#else
+
+    if (strlen(src) <= strlen(dst[0]))
+    {
+        char *ptr;
+
+        for (ptr = dst[0]; *ptr; *(ptr++) = '\0');
+
+        strcpy(dst[0], src);
+    } else
+    {
+        /* stolen from the source to perl 4.036 (assigning to $0) */
+        char *ptr, *ptr2;
+        int count;
+        ptr = dst[0] + strlen(dst[0]);
+        for (count = 1; count < argc; count++) {
+            if (dst[count] == ptr + 1)
+                ptr += strlen(++ptr);
+        }
+        if (environ[0] == ptr + 1) {
+            for (count = 0; environ[count]; count++)
+                if (environ[count] == ptr + 1)
+                    ptr += strlen(++ptr);
+        }
+        count = 0;
+        for (ptr2 = dst[0]; ptr2 <= ptr; ptr2++) {
+            *ptr2 = '\0';
+            count++;
+        }
+        strncpy(dst[0], src, count);
+    }
+#endif
+}
 
 char *get_time() {
     time_t t;
@@ -37,13 +129,22 @@ char *ht_time(time_t t, char *fmt, int gmt) {
 struct tm *get_gmtoff(long *tz) {
     time_t tt;
     struct tm *t;
+#ifdef APOLLO
+    struct timeval tp;	/* see gettimeofday(2) */
+    struct timezone tzp;
+#endif
 
     tt = time(NULL);
     t = localtime(&tt);
-#if defined(BSD) && !defined(AUX) && !defined(APOLLO)
+#if defined(BSD) && !defined(AUX) && !defined(APOLLO) && !defined(__QNX__)
     *tz = t->tm_gmtoff;
 #else
+  #ifdef APOLLO
+    gettimeofday(&tp,&tzp);
+    *tz = (60 * tzp.tz_minuteswest);
+  #else
     *tz = - timezone;
+  #endif
     if(t->tm_isdst)
         *tz += 3600;
 #endif
@@ -235,13 +336,13 @@ int count_dirs(char *path) {
 
 
 void strcpy_dir(char *d, char *s) {
-    register int x;
+   register int x;
 
-    for(x=0;s[x];x++)
-        d[x] = s[x];
+   for(x=0;s[x];x++)
+       d[x] = s[x];
 
-    if(s[x-1] != '/') d[x++] = '/';
-    d[x] = '\0';
+   if(s[x-1] != '/') d[x++] = '/';
+   d[x] = '\0';
 }
 
 /*
@@ -269,10 +370,10 @@ void strncpy_dir(char *d, char *s, int n) {
 void lim_strcpy(char *d, char *s, int n) 
 {
     while (--n && (*d++ = *s++))
-	;
+     ;
 
     if (!n) 
-	*d = '\0';
+      *d = '\0';
 }
 
 void chdir_file(char *file) {
@@ -298,20 +399,43 @@ void getline_timed_out() {
 
     sprintf(errstr,"timed out waiting for %s",remote_name);
     log_error(errstr);
-    fclose(stdin);
-    fclose(stdout);
-    exit(0);
+    if (!standalone) {
+	fclose(stdin);
+	fclose(stdout);
+	exit(0);
+    } else {
+        if (remote_name) {
+	    free(remote_name);
+	    remote_name = NULL;
+        }
+        if (remote_host) {
+	    free(remote_host);
+	    remote_host = NULL;
+        }
+/* Don't free it, its system memory */ 
+/*        if (remote_ip) {
+	    free(remote_ip);
+	    remote_ip = NULL;
+        } */
+#if defined(NeXT) || defined(__mc68000__)
+	longjmp(jmpbuffer,1);
+#else
+        siglongjmp(jmpbuffer,1);
+#endif
+    }
 }
+
+/* Original, mostly brain dead version
 
 int getline(char *s, int n, int f, unsigned int timeout) {
     register int i=0, ret;
 
     signal(SIGALRM,getline_timed_out);
     alarm(timeout);
-    while(1) {
+    while(1) { 
         if((ret = read(f,&s[i],1)) <= 0) {
             /* Mmmmm, Solaris.  */
-            if((ret == -1) && (errno == EINTR))
+/*            if((ret == -1) && (errno == EINTR))
                 continue;
             s[i] = '\0';
             return 1;
@@ -326,6 +450,122 @@ int getline(char *s, int n, int f, unsigned int timeout) {
             s[i] = '\0';
             return 0;
         }
+        ++i;
+    }
+} */
+
+/* Fixed, from Robert Thau
+/* An awkward attempt to fix the single-character-read braindamage
+ * which Rob McCool has described as the worst implementation decision
+ * of his entire life...
+ *
+ * Unfortunately, there is no easy fix for CGI POSTs unless we want to
+ * break NPH scripts (which we might).  However, all current GET
+ * transactions can be buffered without fear.  So, let's try that and
+ * see what happens.
+ *
+ * If the first four characters read off the socket are "GET ", we do
+ * buffering.  Otherwise, we keep the original brain-damaged behavior.
+ *
+ * rst, 11/4/94
+ *
+ * Further hacked to not set the timeout alarm unless we are actually
+ * reading from the socket.  (All those alarm() calls do add up).
+ *
+ * rst, 1/23/95
+ */
+
+int getline_seen_cmd = 0;
+char getline_buffer[HUGE_STRING_LEN];
+int getline_buffered_fd = -1;
+
+static int getline_buf_posn;
+static int getline_buf_good;
+
+int getline_read_buf(char *s, int n, unsigned int timeout)
+{
+  char *endp = s + n - 1;
+  int have_alarmed = 0;
+  int buf_posn = getline_buf_posn, buf_good = getline_buf_good;
+  int f = getline_buffered_fd;
+  int client_broke_off = 0;
+  int c = 0;                    /* Anything but LF */
+  
+  do
+  {
+    if (buf_posn == buf_good)
+    {
+      int ret;
+
+      have_alarmed = 1;
+      signal(SIGALRM,getline_timed_out);
+      alarm(timeout);
+      
+      if ((ret=read(f, getline_buffer, sizeof(getline_buffer))) <= 0)
+      {
+        if (ret == -1 && errno == EINTR) continue; /* Solaris... */
+        else { client_broke_off = 1; break; }
+      }
+
+      buf_good = ret;
+      buf_posn = 0;
+    }
+    
+    c = getline_buffer[buf_posn++];
+
+    if (c == LF) break;
+    if (c != CR) *s++ = c;
+  }
+  while (s < endp);
+  
+  if (have_alarmed) { alarm(0); signal(SIGALRM,SIG_IGN); }
+  
+  *s = '\0';
+  getline_buf_posn = buf_posn;
+  getline_buf_good = buf_good;
+  
+  return client_broke_off;
+}
+
+int getline(char *s, int n, int f, unsigned int timeout) {
+    register int i=0, ret;
+
+    if (f == getline_buffered_fd)
+      return getline_read_buf (s, n, timeout);
+    
+    signal(SIGALRM,getline_timed_out);
+    alarm(timeout);
+    while(1) {
+        if((ret = read(f,&s[i],1)) <= 0) {
+          /* Mmmmm, Solaris.  */
+          if((ret == -1) && (errno == EINTR))
+            continue;
+          s[i] = '\0';
+          return 1;
+        }
+
+        if(s[i] == CR)
+            continue;           /* Get another character... */
+
+        if((s[i] == LF) || (i == (n-1))) {
+            alarm(0);
+            signal(SIGALRM,SIG_IGN);
+            s[i] = '\0';
+            return 0;
+        }
+
+        if (i == 3 && getline_seen_cmd == 0)
+        {
+          getline_seen_cmd = 1;
+          
+          if (!strncmp (s, "GET ", 4)) {
+            getline_buffered_fd = f;
+            getline_buf_posn = getline_buf_good = 0; /* Force read */
+            ret = getline_read_buf (s + 4, n - 4, timeout);
+            return ret;
+          }
+        }
+        
         ++i;
     }
 }
@@ -362,37 +602,37 @@ void cfg_getword(char *word, char *line) {
     for(y=0;line[y] = line[x];++x,++y);
 }
 
-int cfg_getline(char *s, int n, FILE *f) {
-    register int i=0;
-    register char c;
+int eat_ws (FILE* fp)
+{
+    int ch;
 
-    s[0] = '\0';
-    /* skip leading whitespace */
-    while(1) {
-        c=(char)fgetc(f);
-        if((c != '\t') && (c != ' '))
-            break;
+    while ((ch = fgetc (fp)) != EOF) {
+        if (ch != ' ' && ch != '\t')
+            return ch;
     }
-    while(1) {
-        if((c == '\t') || (c == ' ')) {
-            s[i++] = ' ';
-            while((c == '\t') || (c == ' ')) 
-                c=(char)fgetc(f);
+    return ch;
+}
+         
+int cfg_getline (char* s, int n, FILE* fp)
+{
+    int   len = 0, ch;
+
+    ch = eat_ws(fp);
+    while (1) {
+        if (ch == EOF || ch == '\n' || (len == n-1)) {
+            if (len && s[len - 1] == ' ') s[len - 1] = '\0'; 
+            else s[len] = '\0';
+            return feof(fp) ? 1 : 0;
         }
-        if(c == CR) {
-            c = fgetc(f);
+        s[len++] = ch;
+        ch = fgetc (fp);
+        if (ch == '\t' || ch == ' ') {
+            s[len++] = ch;
+            ch = eat_ws (fp);
         }
-        if((c == 0x4) || (c == LF) || (i == (n-1))) {
-            /* blast trailing whitespace */
-            while(i && (s[i-1] == ' ')) --i;
-            s[i] = '\0';
-            return (feof(f) ? 1 : 0);
-        }
-        s[i] = c;
-        ++i;
-        c = (char)fgetc(f);
     }
 }
+
 
 void escape_shell_cmd(char *cmd) {
     register int x,y,l;
@@ -446,7 +686,6 @@ void unescape_url(char *url) {
 
 void escape_url(char *url) {
     register int x,y;
-    register char digit;
     char *copy;
 
     copy = strdup(url);
@@ -463,7 +702,6 @@ void escape_url(char *url) {
 
 void escape_uri(char *url) {
     register int x,y;
-    register char digit;
     char *copy;
 
     copy = strdup(url);
@@ -513,32 +751,54 @@ int is_url(char *u) {
 
 char *make_env_str(char *name, char *value, FILE *out) {
     char *t,*tp;
+    char *value2;
+    char *name2;
+    
+    value2 = value;
+    name2 = name;
 
-    if(!(t = (char *)malloc(strlen(name)+strlen(value)+2)))
+    if(!(t = (char *)malloc(strlen(name)+strlen(value2)+2)))
         die(NO_MEMORY,"make_env_str",out);
 
-    for(tp=t;*tp = *name;tp++,name++);
-    for(*tp++ = '=';*tp = *value;tp++,value++);
+    for(tp=t;*tp = *name2;tp++,name2++);
+    for(*tp++ = '=';*tp = *value2;tp++,value2++);
     return t;
 }
 
+char* replace_env_str(char **env, char *name, char *value, FILE *out)
+{
+    register int i, len;
+ 
+    for (i = 0, len = strlen(name); env[i]; i++) {
+	if (strncmp(env[i], name, len) == 0) {
+	    free(env[i]);
+	    env[i] = make_env_str(name, value, out);
+	    return env[i];
+	}
+    }
+}
+
+
 char **new_env(char **env, int to_add, int *pos) {
     if(!env) {
+        char **newenv;
         *pos = 0;
-        return (char **)malloc((to_add+1)*sizeof(char *));
+        newenv = (char **)malloc((to_add+1)*sizeof(char *));
+	newenv[to_add] = NULL;
+	return newenv;
     }
     else {
         int x;
-        char **newenv;
 
-        for(x=0;env[x];x++);
-        if(!(newenv = (char **)malloc((to_add+x+1)*(sizeof(char *)))))
-            return NULL;
         for(x=0;env[x];x++)
-            newenv[x] = env[x];
+	    ;
+
+        if(!(env = (char **)realloc(env, (to_add+x+1)*(sizeof(char *)))))
+            return NULL;
+
+	env[to_add + x] = NULL;
         *pos = x;
-        free(env);
-        return newenv;
+        return env;
     }
 }
 
@@ -548,6 +808,7 @@ void free_env(char **env) {
     for(x=0;env[x];x++)
         free(env[x]);
     free(env);
+    env = NULL;
 }
 
 int can_exec(struct stat *finfo) {
@@ -631,6 +892,14 @@ int initgroups(const char *name, gid_t basegid)
     }
 
   return setgroups(index, groups);
+}
+#endif
+
+#ifdef __QNX__
+int setgroups(int index, gid_t *groups) {
+   index = index;
+   groups = groups;
+   return 0;
 }
 #endif
 
@@ -728,23 +997,39 @@ void get_remote_host(int fd) {
     struct sockaddr addr;
     int len;
     struct in_addr *iaddr;
+#ifndef MINIMAL_DNS
     struct hostent *hptr;
+#endif
 
     len = sizeof(struct sockaddr);
+    if (remote_name) {
+	free(remote_name);
+	remote_name = NULL;
+    }
+    if (remote_host) {
+	free(remote_host);
+	remote_host = NULL;
+    }
+/* Don't free it, its system memory */
+/*    if (remote_ip) {
+	free(remote_ip);
+	remote_ip = NULL;
+    } */
 
     if ((getpeername(fd, &addr, &len)) < 0) {
-        remote_host=NULL;
-        remote_ip=NULL;
-        remote_name="UNKNOWN_HOST";
+	remote_name = (char *) malloc (sizeof(char)*13);
+        strcpy(remote_name,"UNKNOWN_HOST");
         return;
     }
+
     iaddr = &(((struct sockaddr_in *)&addr)->sin_addr);
 #ifndef MINIMAL_DNS
     hptr = gethostbyaddr((char *)iaddr, sizeof(struct in_addr), AF_INET);
     if(hptr) {
         remote_host = strdup(hptr->h_name);
         str_tolower(remote_host);
-        remote_name = remote_host;
+	if (remote_name) free(remote_name);
+        remote_name = strdup(remote_host);
     }
     else 
 #endif
@@ -755,6 +1040,7 @@ void get_remote_host(int fd) {
     /* Code from Harald Hanche-Olsen <hanche@imf.unit.no> */
     if(remote_host) {
         char **haddr;
+
         hptr = gethostbyname(remote_host);
         if (hptr) {
             for(haddr=hptr->h_addr_list;*haddr;haddr++) {
@@ -763,18 +1049,27 @@ void get_remote_host(int fd) {
             }
         }
         if((!hptr) || (!(*haddr)))
-            remote_host = NULL;
+	    if (remote_host) {
+		free(remote_host);
+            	remote_host = NULL;
+	    }
     }
 #endif
     remote_ip = inet_ntoa(*iaddr);
-    if(!remote_host)
-        remote_name = remote_ip;
+    if(!remote_host){
+	if (remote_name) free(remote_name);
+        remote_name = strdup(remote_ip);
+    }
+    if (!remote_name){
+	remote_name = (char *) malloc (sizeof(char)*15);
+        strcpy(remote_name,"UNKNOWN_HOST");
+    }
 }
 
 char *get_remote_logname(FILE *fd) {
     int len;
     char *result;
-#ifdef NEXT
+#if defined(NeXT) || defined(LINUX) || defined(SOLARIS2) || defined(__bsdi__) || defined(AIX4)
     struct sockaddr sa_server, sa_client;
 #else
     struct sockaddr_in sa_server,sa_client;
@@ -783,13 +1078,18 @@ char *get_remote_logname(FILE *fd) {
     len = sizeof(sa_client);
     if(getpeername(fileno(stdout),&sa_client,&len) != -1) {
         len = sizeof(sa_server);
-        if(getsockname(fileno(stdout),&sa_server,&len) == -1)
-            result = "unknown";
+        if(getsockname(fileno(stdout),&sa_server,&len) == -1){
+	    result = (char *) malloc(sizeof(char)*8);
+            strcpy(result, "unknown");
+	}
         else
             result = rfc931((struct sockaddr_in *) & sa_client,
                                     (struct sockaddr_in *) & sa_server);
     }
-    else result = "unknown";
+    else {
+	result = (char *) malloc(sizeof(char)*8);
+        strcpy(result, "unknown");
+    }
 
     return result; /* robm=pinhead */
 }
@@ -811,7 +1111,12 @@ void get_local_host()
 }
 
 void construct_url(char *d, char *s) {
+/* Since 80 is default port */
+  if (port == 80) {
+    sprintf(d,"http://%s%s",server_hostname,s);
+  } else {
     sprintf(d,"http://%s:%d%s",server_hostname,port,s);
+  }
 /*    escape_url(d); */
 }
 

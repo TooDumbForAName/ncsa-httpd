@@ -16,7 +16,16 @@ RM= /bin/rm -f
 
 all: query post-query imagemap jj phf
 
-ibm:
+att:
+	make all CC=gcc CFLAGS="-O2 -DNO_STDLIB_H"
+
+aux:
+	make all CC=gcc CFLAGS=-O2
+
+aix3:
+	make all CC=gcc
+
+aix4:
 	make all CC=gcc
 
 sunos:
@@ -24,8 +33,10 @@ sunos:
 
 solaris:
 	make all CC=gcc
+hp-gcc: 
+	make all CC=gcc
 
-hp: 
+hp-cc:
 	make all CC=cc CFLAGS=-Ae
 
 sgi:
@@ -37,6 +48,14 @@ decmips:
 decaxp:
 	make all CC=cc
 
+netbsd:
+	make all CC=cc
+linux:
+	make all CC=gcc
+
+svr4:
+	make all CC=cc
+
 tar: query post-query imagemap jj phf 
 	$(RM) post-query.o util.o imagerect.o jj.o phf.o
 
@@ -46,8 +65,8 @@ post-query: post-query.o util.o
 query: query.o util.o
 	$(CC) query.o util.o -o ../cgi-bin/query
 
-imagemap: imagemap.o util.o
-	$(CC) imagemap.o util.o -o ../cgi-bin/imagemap
+imagemap: imagemap.o
+	$(CC) imagemap.o -o ../cgi-bin/imagemap
 
 jj: jj.o util.o
 	$(CC) jj.o util.o -o ../cgi-bin/jj

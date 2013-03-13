@@ -80,6 +80,9 @@ to64(s, v, n)
 }
 
 char *crypt(char *pw, char *salt); /* why aren't these prototyped in include */
+#ifdef HEAD_GETPASS
+char *getpass(char *prompt);
+#endif
 
 void add_password(char *user, FILE *f) {
     char *pw, *cpw, salt[3];

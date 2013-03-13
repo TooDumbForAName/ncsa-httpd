@@ -17,10 +17,18 @@ static char sccsid[] = "@(#) rfc931.c 1.8 93/12/13 22:23:20";
 #define _HPUX_SOURCE
 #endif
 
+#ifdef SCO3
+#define SIGALRM 14
+#endif
+
 /* System libraries. */
 
 #include <stdio.h>
+#ifndef ATTSVR3
 #include <syslog.h>
+#else
+#define syslog(a,b) perror(b)
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>

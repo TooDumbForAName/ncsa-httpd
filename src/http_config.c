@@ -2,12 +2,30 @@
  * http_config.c: auxillary functions for reading httpd's config file
  * and converting filenames into a namespace
  *
- * Rob McCool 
- * 
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
+ *
+ * Based on NCSA HTTPd 1.3 by Rob McCool 
+ *
+ * 10/28/94  cvarela
+ *      Added config options AgentLog and RefererLog for extra log info
+ *
+ * 02/19/95  blong
+ *	Added config options MaxServers and StartServers for configuration
+ *	defined children
+ *
+ * 03/21/95 cvarela
+ *      Added RefererIgnore to ignore certain URIs when logging referers
+ *
+ * 06/01/95 blong
+ *	Added patch by Conrad Damon (damon@netserver.stanford.edu) that
+ *	avoids a cfg_getline loop if a user sets a directory as a password
+ *	file.
  */
 
 #include "httpd.h"
-
+#include "new.h"
 
 /* Server config globals */
 int standalone;
@@ -17,6 +35,9 @@ gid_t group_id;
 char server_root[MAX_STRING_LEN];
 char error_fname[MAX_STRING_LEN];
 char xfer_fname[MAX_STRING_LEN];
+char agent_fname[MAX_STRING_LEN];
+char referer_fname[MAX_STRING_LEN];
+char referer_ignore[MAX_STRING_LEN];
 char pid_fname[MAX_STRING_LEN];
 char server_admin[MAX_STRING_LEN];
 char *server_hostname;
@@ -24,16 +45,15 @@ char srm_confname[MAX_STRING_LEN];
 char server_confname[MAX_STRING_LEN];
 char access_confname[MAX_STRING_LEN];
 char types_confname[MAX_STRING_LEN];
+char annotation_server[MAX_STRING_LEN];  /* SSG 4/5/95 annotation server url */
 int timeout;
 int do_rfc931;
-#ifdef PEM_AUTH
-char auth_pem_decrypt[MAX_STRING_LEN];
-char auth_pem_encrypt[MAX_STRING_LEN];
-char auth_pem_entity[MAX_STRING_LEN];
-char auth_pgp_decrypt[MAX_STRING_LEN];
-char auth_pgp_encrypt[MAX_STRING_LEN];
-char auth_pgp_entity[MAX_STRING_LEN];
+
+#ifndef NO_PASS
+int max_servers;
+int start_servers;
 #endif
+
 
 void process_server_config(FILE *errors) {
     FILE *cfg;
@@ -44,10 +64,19 @@ void process_server_config(FILE *errors) {
     port = DEFAULT_PORT;
     user_id = uname2id(DEFAULT_USER);
     group_id = gname2id(DEFAULT_GROUP);
+
+#ifndef NO_PASS
+    max_servers = DEFAULT_MAX_DAEMON;
+    start_servers = DEFAULT_START_DAEMON;
+#endif
+
     /* ServerRoot set in httpd.c */
     make_full_path(server_root,DEFAULT_ERRORLOG,error_fname);
     make_full_path(server_root,DEFAULT_XFERLOG,xfer_fname);
+    make_full_path(server_root,DEFAULT_AGENTLOG,agent_fname);
+    make_full_path(server_root,DEFAULT_REFERERLOG,referer_fname);
     make_full_path(server_root,DEFAULT_PIDLOG,pid_fname);
+    strcpy(referer_ignore,DEFAULT_REFERERIGNORE);
     strcpy(server_admin,DEFAULT_ADMIN);
     server_hostname = NULL;
     make_full_path(server_root,RESOURCE_CONFIG_FILE,srm_confname);
@@ -55,16 +84,12 @@ void process_server_config(FILE *errors) {
     make_full_path(server_root,ACCESS_CONFIG_FILE,access_confname);
     make_full_path(server_root,TYPES_CONFIG_FILE,types_confname);
 
+    /* initialize the ann.server to nothing */
+    annotation_server[0] = '\0';
+
     timeout = DEFAULT_TIMEOUT;
     do_rfc931 = DEFAULT_RFC931;
-#ifdef PEM_AUTH
-    auth_pem_encrypt[0] = '\0';
-    auth_pem_decrypt[0] = '\0';
-    auth_pem_entity[0] = '\0';
-    auth_pgp_encrypt[0] = '\0';
-    auth_pgp_decrypt[0] = '\0';
-    auth_pgp_entity[0] = '\0';
-#endif
+
 
     if(!(cfg = fopen(server_confname,"r"))) {
         fprintf(errors,"httpd: could not open server config. file %s\n",server_confname);
@@ -76,7 +101,6 @@ void process_server_config(FILE *errors) {
         ++n;
         if((l[0] != '#') && (l[0] != '\0')) {
             cfg_getword(w,l);
-            
             if(!strcasecmp(w,"ServerType")) {
                 if(!strcasecmp(l,"inetd")) standalone=0;
                 else if(!strcasecmp(l,"standalone")) standalone=1;
@@ -102,6 +126,11 @@ void process_server_config(FILE *errors) {
                 cfg_getword(w,l);
                 strcpy(server_admin,w);
             }
+	    /* SSG-4/4/95 read annotation server directive */
+	    else if(!strcasecmp(w,"Annotation-Server")) {
+		cfg_getword(w,l);
+		strcpy(annotation_server, w);
+	    } 
             else if(!strcasecmp(w,"ServerName")) {
                 cfg_getword(w,l);
                 if(server_hostname)
@@ -119,6 +148,8 @@ void process_server_config(FILE *errors) {
                 strcpy(server_root,w);
 	      make_full_path(server_root,DEFAULT_ERRORLOG,error_fname);
 	      make_full_path(server_root,DEFAULT_XFERLOG,xfer_fname);
+	      make_full_path(server_root,DEFAULT_AGENTLOG,agent_fname);
+	      make_full_path(server_root,DEFAULT_REFERERLOG,referer_fname);
 	      make_full_path(server_root,DEFAULT_PIDLOG,pid_fname);
 	      make_full_path(server_root,RESOURCE_CONFIG_FILE,srm_confname);
 	      make_full_path(server_root,ACCESS_CONFIG_FILE,access_confname);
@@ -136,6 +167,22 @@ void process_server_config(FILE *errors) {
                 if(w[0] != '/')
                     make_full_path(server_root,w,xfer_fname);
                 else strcpy(xfer_fname,w);
+            }
+            else if(!strcasecmp(w,"AgentLog")) {
+                cfg_getword(w,l);
+                if(w[0] != '/')
+                    make_full_path(server_root,w,agent_fname);
+                else strcpy(agent_fname,w);
+            }
+            else if(!strcasecmp(w,"RefererLog")) {
+                cfg_getword(w,l);
+                if(w[0] != '/')
+                    make_full_path(server_root,w,referer_fname);
+                else strcpy(referer_fname,w);
+            }
+            else if(!strcasecmp(w,"RefererIgnore")) {
+                cfg_getword(w,l);
+                strcpy(referer_ignore,w);
             }
             else if(!strcasecmp(w,"PidFile")) {
                 cfg_getword(w,l);
@@ -171,36 +218,24 @@ void process_server_config(FILE *errors) {
                     do_rfc931 = 0;
                 else {
                     fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
+                            server_confname);
                     fprintf(errors,"IdentityCheck must be on or off.\n");
                 }
             }
-#ifdef PEM_AUTH
-            else if(!strcasecmp(w,"PEMEncryptCmd")) {
-                cfg_getword(w,l);
-                strcpy(auth_pem_encrypt,w);
-            }
-            else if(!strcasecmp(w,"PEMDecryptCmd")) {
-                cfg_getword(w,l);
-                strcpy(auth_pem_decrypt,w);
-            }
-            else if(!strcasecmp(w,"PEMServerEntity")) {
-                cfg_getword(w,l);
-                strcpy(auth_pem_entity,w);
-            }
-            else if(!strcasecmp(w,"PGPEncryptCmd")) {
-                cfg_getword(w,l);
-                strcpy(auth_pgp_encrypt,w);
-            }
-            else if(!strcasecmp(w,"PGPDecryptCmd")) {
-                cfg_getword(w,l);
-                strcpy(auth_pgp_decrypt,w);
-            }
-            else if(!strcasecmp(w,"PGPServerEntity")) {
-                cfg_getword(w,l);
-                strcpy(auth_pgp_entity,w);
-            }
+	    else if(!strcasecmp(w,"MaxServers")) {
+#ifndef NO_PASS
+		max_servers = atoi(l);
+#else
+		fprintf(errors,"This compile doesn't support MaxServers on line %d of %s:\n",n,server_confname);
+#endif		
+	    }
+	    else if(!strcasecmp(w,"StartServers")) {
+#ifndef NO_PASS
+		start_servers = atoi(l);
+#else
+		fprintf(errors,"This compile doesn't support StartServers on line %d of %s:\n",n,server_confname);
 #endif
+            }
             else {
                 fprintf(errors,"Syntax error on line %d of %s:\n",n,server_confname);
                 fprintf(errors,"Unknown keyword %s.\n",w);
@@ -217,7 +252,9 @@ char index_name[MAX_STRING_LEN];
 char access_name[MAX_STRING_LEN];
 char document_root[MAX_STRING_LEN];
 char default_type[MAX_STRING_LEN];
+char local_default_type[MAX_STRING_LEN];
 char default_icon[MAX_STRING_LEN];
+char local_default_icon[MAX_STRING_LEN];
 
 void process_resource_config(FILE *errors) {
     FILE *cfg;
@@ -340,7 +377,7 @@ void process_resource_config(FILE *errors) {
 "AddEncoding must be followed by a type, one space, then a file or extension.\n");
                     exit(1);
                 }
-                add_encoding(w2,w,errors);
+		 add_encoding(w2,w,errors);
             }
             else if(!strcasecmp(w,"Redirect")) {
                 char w2[MAX_STRING_LEN];
@@ -451,6 +488,12 @@ fprintf(errors,"AddDescription must have quotes around the description.\n");
             }
             else if(!strcasecmp(w,"IndexOptions"))
                 add_opts(l,"/",errors);
+	    else if (!strcasecmp(w,"ErrorDocument")) {
+		char w2[MAX_STRING_LEN];
+	        cfg_getword(w,l); /* Get errornum */
+		cfg_getword(w2,l); /* Get filename */
+		add_error(w,w2);
+            }
             else {
                 fprintf(errors,"Syntax error on line %d of %s:\n",n,
                         srm_confname);
@@ -460,6 +503,11 @@ fprintf(errors,"AddDescription must have quotes around the description.\n");
         }
     }
     fclose(cfg);
+
+    Saved_Forced = forced_types;
+    Saved_Encoding = encoding_types;
+    /* Save the number of global aliases */
+    save_aliases();
 }
 
 
@@ -471,6 +519,8 @@ char *auth_grpfile;
 
 /* Access Globals*/
 int num_sec;
+/* number of security directories in access config file */
+int num_sec_config;
 security_data sec[MAX_SECURITY];
 
 void access_syntax_error(int n, char *err, char *file, FILE *out) {
@@ -490,7 +540,6 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                      char *file, FILE *out) 
 {
     char l[MAX_STRING_LEN];
-    char t[MAX_STRING_LEN];
     char w[MAX_STRING_LEN];
     char w2[MAX_STRING_LEN];
     int n=line;
@@ -628,7 +677,7 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
             if(!(or & OR_FILEINFO))
                 access_syntax_error(n,"override violation",file,out);
             cfg_getword(w,l);
-            strcpy(default_type,w);
+            strcpy(local_default_type,w);
         }
         else if(!strcasecmp(w,"AddEncoding")) {
             if(!(or & OR_FILEINFO))
@@ -646,7 +695,7 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
             if(!(or & OR_INDEXES))
                 access_syntax_error(n,"override violation",file,out);
             cfg_getword(w,l);
-            strcpy(default_icon,w);
+            strcpy(local_default_icon,w);
         }
         else if(!strcasecmp(w,"AddDescription")) {
             char desc[MAX_STRING_LEN];
@@ -730,11 +779,11 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                 access_syntax_error(n,
 "Redirect must be followed by a document, one space, then a URL.",file,out);
             }
-            if(!file)
+            if(!file) 
                 add_redirect(w,w2);
             else
                 access_syntax_error(n,
-"Redirect no longer supported from .htaccess files.",file,out);
+"Redirect no longer supported from .htaccess files.",file,out); 
         }
         else if(!strcasecmp(w,"<Limit")) {
             int m[METHODS];
@@ -831,7 +880,7 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
             char errstr[MAX_STRING_LEN];
             sprintf(errstr,"Unknown method %s",w);
             access_syntax_error(n,errstr,file,out);
-            return;
+            return -1;
         }
     }
     ++num_sec;
@@ -843,7 +892,6 @@ void parse_htaccess(char *path, char override, FILE *out) {
     FILE *f;
     char t[MAX_STRING_LEN];
     char d[MAX_STRING_LEN];
-    int x;
 
     strcpy(d,path);
     make_full_path(d,access_name,t);
@@ -861,7 +909,8 @@ void process_access_config(FILE *errors) {
     char w[MAX_STRING_LEN];
     int n;
 
-    num_sec = 0;n=0;
+    num_sec = 0; 
+    n=0;
     if(!(f=fopen(access_confname,"r"))) {
         fprintf(errors,"httpd: could not open access configuration file %s.\n",
                 access_confname);
@@ -871,17 +920,18 @@ void process_access_config(FILE *errors) {
     while(!(cfg_getline(l,MAX_STRING_LEN,f))) {
         ++n;
         if((l[0] == '#') || (!l[0])) continue;
-        cfg_getword(w,l);
-        if(strcasecmp(w,"<Directory")) {
-            fprintf(errors,
-                    "Syntax error on line %d of access config. file.\n",n);
-            fprintf(errors,"Unknown directive %s.\n",w);
-            exit(1);
-        }
-        getword(w,l,'>');
-        n=parse_access_dir(f,n,OR_ALL,w,NULL,errors);
+	cfg_getword(w,l);
+	if(strcasecmp(w,"<Directory")) {
+	    fprintf(errors,
+		    "Syntax error on line %d of access config. file.\n",n);
+	    fprintf(errors,"Unknown directive %s.\n",w);
+	    exit(1);
+	}
+	getword(w,l,'>');
+	n=parse_access_dir(f,n,OR_ALL,w,NULL,errors);
     }
     fclose(f);
+    num_sec_config = num_sec;
 }
 
 int get_pw(char *user, char *pw, FILE *errors) {
@@ -889,7 +939,15 @@ int get_pw(char *user, char *pw, FILE *errors) {
     char errstr[MAX_STRING_LEN];
     char l[MAX_STRING_LEN];
     char w[MAX_STRING_LEN];
+    struct stat finfo;
 
+/* From Conrad Damon (damon@netserver.standford.edu),
+   Don't start cfg_getline loop if auth_pwfile is a directory. */
+
+    if ((stat (auth_pwfile, &finfo) == -1) || (!S_ISREG(finfo.st_mode))) {
+      sprintf(errstr,"%s is not a valid file.", auth_pwfile);
+      die(SERVER_ERROR,errstr,errors);
+    }
     if(!(f=fopen(auth_pwfile,"r"))) {
         sprintf(errstr,"Could not open user file %s",auth_pwfile);
         die(SERVER_ERROR,errstr,errors);
@@ -920,21 +978,32 @@ static struct ge *grps;
 int init_group(char *grpfile, FILE *out) {
     FILE *f;
     struct ge *p;
-    char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
+    char l[HUGE_STRING_LEN],w[HUGE_STRING_LEN];
+    struct stat finfo;
 
-    if(!(f=fopen(grpfile,"r")))
+    if ((stat (grpfile, &finfo) == -1) || (!S_ISREG(finfo.st_mode))) {
+      return 0;
+    }
+
+    if(!(f=fopen(grpfile,"r"))) 
         return 0;
 
     grps = NULL;
-    while(!(cfg_getline(l,MAX_STRING_LEN,f))) {
+    while(!(cfg_getline(l,HUGE_STRING_LEN,f))) {
         if((l[0] == '#') || (!l[0])) continue;
         getword(w,l,':');
-        if(!(p = (struct ge *) malloc (sizeof(struct ge))))
+        if(!(p = (struct ge *) malloc (sizeof(struct ge)))) {
+	    fclose(f);
             die(NO_MEMORY,"init_group",out);
-        if(!(p->name = strdup(w)))
+	}
+        if(!(p->name = strdup(w))) {
+	    fclose(f);
             die(NO_MEMORY,"init_group",out);
-        if(!(p->members = strdup(l)))
+	}
+        if(!(p->members = strdup(l))) {
+	    fclose(f);
             die(NO_MEMORY,"init_group",out);
+	}
         p->next = grps;
         grps = p;
     }
@@ -942,16 +1011,17 @@ int init_group(char *grpfile, FILE *out) {
     return 1;
 }
 
+/* make global for now. This function is called a lot SSG 4/25/95 */
+char mems[HUGE_STRING_LEN],wrdbuf[HUGE_STRING_LEN];
 int in_group(char *user, char *group) {
     struct ge *p = grps;
-    char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
 
     while(p) {
         if(!strcmp(p->name,group)) {
-            strcpy(l,p->members);
-            while(l[0]) {
-                getword(w,l,' ');
-                if(!strcmp(w,user))
+            strcpy(mems,p->members);
+            while(mems[0]) {
+                getword(wrdbuf,mems,' ');
+                if(!strcmp(wrdbuf,user)) 
                     return 1;
             }
         }
@@ -976,7 +1046,7 @@ void read_config(FILE *errors)
 {
     reset_aliases();
     process_server_config(errors);
-    init_mime(errors);
+    init_mime();
     init_indexing();
     process_resource_config(errors);
     process_access_config(errors);

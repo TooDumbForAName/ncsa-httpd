@@ -1,13 +1,32 @@
 /*
  * http_script: keeps all script-related ramblings together.
  * 
- * Compliant to CGI/1.0 spec
- * 
- * Rob McCool
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
  *
+ * Based on NCSA HTTPd 1.3 by Rob McCool
+ *
+ * 03-07-95 blong
+ *	Added support for variable REMOTE_GROUP from access files
+ *
+ * 03-20-95 sguillory
+ *	Moved to more dynamic memory management of environment arrays
+ *
+ * 04-03-95 blong
+ *	Added support for variables DOCUMENT_ROOT, ERROR_STATUS
+ *	ERROR_URL, ERROR_REQUEST
+ *
+ * 04-20-95 blong
+ *	Added Apache patch "B18" from Rob Hartill to allow nondelayed redirects
+ *
+ * 05-02-95 blong
+ *    Since Apache is using REDIRECT_ as the env variables, I've decided to 
+ *    go with this in the interest of general Internet Harmony and Peace.
  */
 
 #include "httpd.h"
+#include "new.h"
 
 int pid;
 
@@ -76,11 +95,12 @@ void get_path_info(char *path, char *path_args, FILE *out,
         }
     }
     unmunge_name(path);
+    log_reason("script does not exist",path);
     die(NOT_FOUND,path,out);
 }
 
-#define MAX_COMMON_VARS 9
-#define MAX_CGI_VARS (MAX_COMMON_VARS+9)
+#define MAX_COMMON_VARS 16
+#define MAX_CGI_VARS (MAX_COMMON_VARS+16)
 
 char **add_cgi_vars(char **env,
                     char *method, char *path, char *path_args, char *args,
@@ -119,12 +139,19 @@ char **add_cgi_vars(char **env,
             env[x++] = make_env_str("CONTENT_LENGTH",t,out);
         }
     }
+    if (ErrorStat) {
+      if (failed_request[0]) 
+	env[x++] = make_env_str("REDIRECT_REQUEST",failed_request,out);
+      if (failed_url[0])
+	env[x++] = make_env_str("REDIRECT_URL",failed_url,out);
+      env[x++] = make_env_str("REDIRECT_STATUS",set_stat_line(),out);
+    }
     env[x] = NULL;
     return env;
 }
 
 char **add_common_vars(char **env,FILE *out) {
-    char t[HUGE_STRING_LEN],*env_path;
+    char t[MAX_STRING_LEN],*env_path,*env_tz;
     int x;
 
     if(!(env = new_env(env,MAX_COMMON_VARS,&x)))
@@ -133,18 +160,32 @@ char **add_common_vars(char **env,FILE *out) {
     if(!(env_path = getenv("PATH")))
         env_path=DEFAULT_PATH;
     env[x++] = make_env_str("PATH",env_path,out);
+    if((env_tz = getenv("TZ")))
+	env[x++] = make_env_str("TZ",env_tz,out);
     env[x++] = make_env_str("SERVER_SOFTWARE",SERVER_VERSION,out);
     env[x++] = make_env_str("SERVER_NAME",server_hostname,out);
     sprintf(t,"%d",port);
     env[x++] = make_env_str("SERVER_PORT",t,out);
     env[x++] = make_env_str("REMOTE_HOST",remote_name,out);
     env[x++] = make_env_str("REMOTE_ADDR",remote_ip,out);
+    env[x++] = make_env_str("DOCUMENT_ROOT",document_root,out);
     if(user[0])
         env[x++] = make_env_str("REMOTE_USER",user,out);
+    if(annotation_server[0])
+        env[x++] = make_env_str("ANNOTATION_SERVER",annotation_server,out);
+    if(groupname[0])
+	env[x++] = make_env_str("REMOTE_GROUP",groupname,out);
     if(auth_type)
         env[x++] = make_env_str("AUTH_TYPE",auth_type,out);
     if(do_rfc931)
         env[x++] = make_env_str("REMOTE_IDENT",remote_logname,out);
+    if (ErrorStat) {
+      if (failed_request[0]) 
+        env[x++] = make_env_str("REDIRECT_REQUEST",failed_request,out);
+      if (failed_url[0]) 
+        env[x++] = make_env_str("REDIRECT_URL",failed_url,out);
+      env[x++] = make_env_str("REDIRECT_STATUS",set_stat_line(),out);
+    }
     env[x] = NULL;
     return env;
 }
@@ -156,7 +197,7 @@ int cgi_stub(char *method, char *path, char *path_args, char *args,
     int content, nph;
     char *argv0;
     FILE *psin;
-    register int x;
+    char errlog[100];
 
     if(!can_exec(finfo)) {
         unmunge_name(path);
@@ -171,13 +212,15 @@ int cgi_stub(char *method, char *path, char *path_args, char *args,
 
     if(pipe(p) < 0)
         die(SERVER_ERROR,"httpd: could not create IPC pipe",out);
-    if((pid = fork()) < 0)
-        die(SERVER_ERROR,"httpd: could not fork new process",out);
+    if((pid = fork()) < 0) {
+	sprintf(errlog,"httpd: could not fork new process: 2/%d",errno);
+        die(SERVER_ERROR,errlog,out);
+    }
 
     nph = (strncmp(argv0,"nph-",4) ? 0 : 1);
     if(!pid) {
         close(p[0]);
-        env = add_cgi_vars(env,method,path,path_args,args,&content,out);
+        in_headers_env = add_cgi_vars(in_headers_env,method,path,path_args,args,&content,out);
         if(content)
             if(in != STDIN_FILENO) {
                 dup2(in,STDIN_FILENO);
@@ -195,16 +238,21 @@ int cgi_stub(char *method, char *path, char *path_args, char *args,
             }
         }
         error_log2stderr();
+/* To make the signal handling work on HPUX, according to 
+   David-Michael Lincke (dlincke@bandon.unisg.ch) */
+#ifdef HPUX
+	signal(SIGCHLD, SIG_DFL);
+#endif
         /* Only ISINDEX scripts get decoded arguments. */
         if((!args[0]) || (ind(args,'=') >= 0)) {
-            if(execle(path,argv0,(char *)0,env) == -1) {
+            if(execle(path,argv0,(char *)0,in_headers_env) == -1) {
                 fprintf(stderr,"httpd: exec of %s failed, errno is %d\n",
                         path,errno);
                 exit(1);
             }
         }
         else {
-            if(execve(path,create_argv(argv0,args,out),env) == -1) {
+            if(execve(path,create_argv(argv0,args,out),in_headers_env) == -1) {
                 fprintf(stderr,"httpd: exec of %s failed, errno is %d\n",
                         path,errno);
                 exit(1);
@@ -212,6 +260,7 @@ int cgi_stub(char *method, char *path, char *path_args, char *args,
         }
     }
     else {
+	if (nph) close(p[0]);
         close(p[1]);
     }
 
@@ -219,10 +268,15 @@ int cgi_stub(char *method, char *path, char *path_args, char *args,
         if(!(psin = fdopen(p[0],"r")))
             die(SERVER_ERROR,"could not read from script",out);
 
-        if(scan_script_header(psin,out)) {
-            kill_children(); /* !!! */
-            return REDIRECT_URL;
-        }
+	content_type[0] = '\0';
+        scan_script_header(psin,out);
+        /* we never redirect and die now 
+          if(scan_script_header(psin,out)) {
+              kill_children(); 
+              return REDIRECT_URL;
+          }
+        */
+
 
         if(location[0] == '/') {
             char t[HUGE_STRING_LEN],a[HUGE_STRING_LEN],*argp;
@@ -235,16 +289,33 @@ int cgi_stub(char *method, char *path, char *path_args, char *args,
                 *argp++ = '\0';
                 strcpy(a,argp);
             }
+	    status = 302;
+	    log_transaction();
+	    status = 200;
             init_header_vars(); /* clear in_header_env and location */
+	    sprintf(the_request,"GET ");
+	    strncat(the_request,t,HUGE_STRING_LEN - strlen(the_request));
+	    if (a[0] != '\0') {
+		strncat(the_request,"?",HUGE_STRING_LEN - strlen(the_request));
+		strncat(the_request,a, HUGE_STRING_LEN - strlen(the_request));
+	    }
+	    
+	    strncat(the_request," ",HUGE_STRING_LEN - strlen(the_request));
+	    strncat(the_request,protocal, HUGE_STRING_LEN - strlen(the_request));
             process_get(in,out,"GET",t,a);
-            return 0;
+            return REDIRECT_LOCAL;
         }
         content_length = -1;
         if(!assbackwards)
             send_http_header(out);
-        if(!header_only)
-            send_fd(psin,out,kill_children);
-        else
+        if(!header_only) {
+            /* Send a default body of text if the script
+                failed to produce any, but ONLY for redirects */
+            if (!send_fd(psin,out,NULL) && location[0]) {
+                 title_html(out,"Document moved");
+                 fprintf(out,"This document has moved <A HREF=\"%s\">here</A>.<P>%c",location,LF); 
+            }
+        } else
             kill_children();
         fclose(psin);
     }
@@ -258,8 +329,8 @@ void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out)
 {
     struct stat finfo;
     char path_args[HUGE_STRING_LEN];
-    char **env;
-    int m;
+    int m = M_GET;
+    int stub_returns;
 
     get_path_info(path,path_args,out,&finfo);
     if((!strcmp(method,"GET")) || (!strcmp(method,"HEAD"))) m=M_GET;
@@ -273,15 +344,29 @@ void exec_cgi_script(char *method, char *path, char *args, int in, FILE *out)
         unmunge_name(path);
         die(FORBIDDEN,path,out);
     }
-    if(!(env = add_common_vars(in_headers_env,out)))
+    if(!(in_headers_env = add_common_vars(in_headers_env,out))) {
+	free_env(in_headers_env);
+	in_headers_env = NULL;
         die(NO_MEMORY,"exec_cgi_script",out);
+    }
 
     bytes_sent = 0;
-    if(cgi_stub(method,path,path_args,args,env,&finfo,in,out) == REDIRECT_URL)
-        die(REDIRECT,location,out);
-    /* cgi_stub will screw with env, but only after the fork */
-    free_env(env);
-    log_transaction();
+    stub_returns = cgi_stub(method,path,path_args,args,in_headers_env,&finfo,in,out);
+    if (in_headers_env != NULL) { 
+      free_env(in_headers_env);
+      in_headers_env = NULL;
+    }
+
+    switch (stub_returns) {
+	case REDIRECT_URL:
+		die(REDIRECT,location,out);
+		break;
+	case REDIRECT_LOCAL:
+		break;
+	default:
+		log_transaction();
+		break;
+    }
 }
 
 char **set_env_NCSA(FILE *out) {
@@ -385,8 +470,12 @@ void exec_get_NCSA(char *path, char *args, int in, FILE *fd) {
 
     tfp = fdopen(pfd[0],"r");
 
+
+    scan_script_header(tfp,fd);
+    /*  don't force the redirect.. it'll happen
     if(scan_script_header(tfp,fd))
         die(REDIRECT,location,fd);
+    */
 
     if(location[0] == '/') {
         char *t;
@@ -394,15 +483,21 @@ void exec_get_NCSA(char *path, char *args, int in, FILE *fd) {
             die(NO_MEMORY,"exec_get_NCSA",fd);
         location[0] = '\0';
         send_node(t,"",in,fd);
+	fclose(tfp);
         htexit(0,fd);
     }
 
     if(!assbackwards)
         send_http_header(fd);
 
-    if(!header_only)
-        send_fd(tfp,fd,kill_children);
-    else
+    if(!header_only) {
+        /* Send a default body of text if the script
+            failed to produce any, but ONLY for redirects */
+        if (!send_fd(tfp,fd,NULL) &&  location[0]) {
+           title_html(fd,"Document moved");
+           fprintf(fd,"This document has moved <A HREF=\"%s\">here</A>.<P>%c",location,LF);
+        }
+    } else
         kill_children();
     fclose(tfp);
     waitpid(pid,NULL,0);
@@ -411,12 +506,13 @@ void exec_get_NCSA(char *path, char *args, int in, FILE *fd) {
 
 
 void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
-    int inpipe[2],outpipe[2], x;
+    int inpipe[2],outpipe[2];
     char cl[MAX_STRING_LEN];
-    FILE *psin,*psout;
+    FILE *psin;
     struct stat finfo;
     char **env;
-    
+    char errlog[100];
+
     env = set_env_NCSA(out);
 
     sprintf(cl,"%d",content_length);
@@ -434,9 +530,10 @@ void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
         die(SERVER_ERROR,"httpd: could not create IPC pipe",out);
     if(pipe(outpipe) < 0)
         die(SERVER_ERROR,"httpd: could not create IPC pipe",out);
-    if((pid = fork()) < 0)
-        die(SERVER_ERROR,"httpd: could not fork new process",out);
-
+    if((pid = fork()) < 0) {
+	sprintf(errlog,"httpd: could not fork new process 1/%d",errno);
+        die(SERVER_ERROR,errlog,out);
+    }
     if(!pid) {
         char *argv0;
 
@@ -462,8 +559,12 @@ void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
     if(!(psin = fdopen(outpipe[0],"r")))
         die(SERVER_ERROR,"could not read from script",out);
 
+
+    scan_script_header(psin,out);
+    /* don't force the redirect, it'll happen 
     if(scan_script_header(psin,out))
         die(REDIRECT,location,out);
+    */
 
     if(location[0] == '/') {
         char *t;
@@ -471,6 +572,7 @@ void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
             die(NO_MEMORY,"exec_post_NCSA",out);
         location[0] = '\0';
         send_node(t,"",in,out);
+	fclose(psin);
         htexit(0,out);
     }
 
@@ -478,7 +580,12 @@ void exec_post_NCSA(char *path, char *args, int in, FILE *out) {
     if(!assbackwards)
         send_http_header(out);
 
-    send_fd(psin,out,kill_children);
+    /* send a default body of text if the script
+       failed to produce any, but ONLY for redirects */
+    if (!send_fd(psin,out,NULL) && location[0]) {
+           title_html(out,"Document moved");
+           fprintf(out,"This document has moved <A HREF=\"%s\">here</A>.<P>%c",location,LF);
+    }
     fclose(psin);
     waitpid(pid,NULL,0);
 }

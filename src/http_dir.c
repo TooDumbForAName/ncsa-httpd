@@ -1,9 +1,16 @@
 /*
  * http_dir.c: Handles the on-the-fly html index generation
  * 
- * Rob McCool
- * 3/23/93
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
+ *
+ * 03-23-93 Rob McCool
+ *	Wrote base code up to release 1.3
  * 
+ * 03-12-95 blong
+ *      Added patch by Roy T. Fielding <fielding@avron.ICS.UCI.EDU>
+ *      to fix missing trailing slash for parent directory 
  */
 
 
@@ -203,7 +210,6 @@ void add_opts(char *optstr, char *path, FILE *out) {
 
 char *find_item(struct item *list, char *path, int path_only) {
     struct item *p = list;
-    char *t;
 
     while(p) {
         /* Special cased for ^^DIRECTORY^^ and ^^BLANKICON^^ */
@@ -303,13 +309,16 @@ char *find_title(char *filename) {
     content_encoding[0] = '\0';
     strcpy(filebak,filename);
     set_content_type(filebak);
-    if((!strcmp(content_type,"text/html")) && (!content_encoding[0])) {
+    if(((!strcmp(content_type,"text/html")) ||
+        (strcmp(content_type,INCLUDES_MAGIC_TYPE)==0))
+       && (!content_encoding[0]))
+       {
         if(!(thefile = fopen(filename,"r")))
             return NULL;
         n = fread(titlebuf,sizeof(char),MAX_STRING_LEN - 1,thefile);
         titlebuf[n] = '\0';
         for(x=0,p=0;titlebuf[x];x++) {
-            if(titlebuf[x] == find[p]) {
+            if(toupper(titlebuf[x]) == find[p]) {
                 if(!find[++p]) {
                     if((p = ind(&titlebuf[++x],'<')) != -1)
                         titlebuf[x+p] = '\0';
@@ -317,10 +326,12 @@ char *find_title(char *filename) {
                     for(y=x;titlebuf[y];y++)
                         if((titlebuf[y] == CR) || (titlebuf[y] == LF))
                             titlebuf[y] = ' ';
+		    fclose(thefile);
                     return strdup(&titlebuf[x]);
                 }
             } else p=0;
         }
+	fclose(thefile);
         return NULL;
     }
     content_encoding[0] = '\0';
@@ -355,7 +366,8 @@ void escape_html(char *fn) {
 struct ent *make_dir_entry(char *path, char *name, FILE *out) {
     struct ent *p;
     struct stat finfo;
-    char t[MAX_STRING_LEN], t2[MAX_STRING_LEN];
+    char t[MAX_STRING_LEN];
+    char *tmp;
 
     if((name[0] == '.') && (!name[1]))
         return(NULL);
@@ -381,17 +393,27 @@ struct ent *make_dir_entry(char *path, char *name, FILE *out) {
         }
         else {
             p->lm = finfo.st_mtime;
+	    p->size = -1;
+	    p->icon = NULL;
+	    p->alt = NULL;
+	    p->desc = NULL;
             if(S_ISDIR(finfo.st_mode)) {
                 if(!(p->icon = find_icon(t,1)))
+		    if (p->icon != NULL) free(p->icon);
                     p->icon = find_icon("^^DIRECTORY^^",1);
-                if(!(p->alt = find_alt(t,1)))
-                    p->alt = "DIR";
+                if(!(tmp = find_alt(t,1))){
+                    p->alt = (char *) malloc(sizeof(char)*4);
+                    strcpy(p->alt,"DIR");
+		} else {
+		  p->alt = strdup(tmp);
+                }
                 p->size = -1;
-                strcpy_dir(p->name,name);
+                strncpy_dir(p->name,name,MAX_STRING_LEN);
             }
             else {
                 p->icon = find_icon(t,0);
-                p->alt = find_alt(t,0);
+                tmp = find_alt(t,0);
+		if (tmp != NULL) p->alt = strdup(tmp);
                 p->size = finfo.st_size;
                 strcpy(p->name,name);
             }
@@ -414,7 +436,6 @@ struct ent *make_dir_entry(char *path, char *name, FILE *out) {
 
 
 void send_size(size_t size, FILE *fd) {
-    char schar;
 
     if(size == -1) {
         fputs("    -",fd);
@@ -464,8 +485,8 @@ void terminate_description(char *desc) {
 
 void output_directories(struct ent **ar,int n,char *name,FILE *fd)
 {
-    int x,pad;
-    char anchor[HUGE_STRING_LEN],t[MAX_STRING_LEN],t2[MAX_STRING_LEN];
+    int x;
+    char anchor[2 * MAX_STRING_LEN + 64],t[MAX_STRING_LEN],t2[MAX_STRING_LEN];
     char *tp;
 
     if(name[0] == '\0') { 
@@ -478,7 +499,7 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
         fputs("<PRE>",fd);
         bytes_sent += 5;
         if(tp = find_icon("^^BLANKICON^^",1))
-            bytes_sent += fprintf(fd,"<IMG SRC=\"%s\" ALT=\"     \"> ",tp);
+            bytes_sent += (fprintf(fd,"<IMG SRC=\"%s\" ALT=\"     \"> ",tp));
         bytes_sent += fprintf(fd,"Name                   ");
         if(!(dir_opts & SUPPRESS_LAST_MOD))
             bytes_sent += fprintf(fd,"Last modified     ");
@@ -495,7 +516,9 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
         
     for(x=0;x<n;x++) {
         if((!strcmp(ar[x]->name,"../")) || (!strcmp(ar[x]->name,".."))) {
-            make_full_path(name,"..",t);
+
+/* Fixes trailing slash for fancy indexing.  Thanks Roy ? */
+            make_full_path(name,"../",t);
             getparents(t);
             if(t[0] == '\0') {
                 t[0] = '/'; t[1] = '\0';
@@ -505,7 +528,7 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
             strcpy(t2,"Parent Directory</A>");
         }
         else {
-            strcpy(t,ar[x]->name);
+            lim_strcpy(t,ar[x]->name, MAX_STRING_LEN);
             strcpy(t2,t);
             if(strlen(t2) > 21) {
                 t2[21] = '>';
@@ -522,9 +545,11 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
         if(dir_opts & FANCY_INDEXING) {
             if(dir_opts & ICONS_ARE_LINKS)
                 bytes_sent += fprintf(fd,"%s",anchor);
-            if((ar[x]->icon) || default_icon[0]) {
+            if((ar[x]->icon) || default_icon[0] || local_default_icon[0]) {
                 bytes_sent += fprintf(fd,"<IMG SRC=\"%s\" ALT=\"[%s]\">",
-                                      ar[x]->icon ? ar[x]->icon : default_icon,
+                                      ar[x]->icon ? ar[x]->icon : 
+				       local_default_icon[0] ? 
+					local_default_icon : default_icon,
                                       ar[x]->alt ? ar[x]->alt : "   ");
             }
             if(dir_opts & ICONS_ARE_LINKS) {
@@ -586,21 +611,23 @@ void index_directory(char *name, FILE *fd)
     int num_ent=0,x;
     struct ent *head,*p,*q;
     struct ent **ar;
-    char unmunged_name[MAX_STRING_LEN];
+    char unmunged_name[HUGE_STRING_LEN];
     char *tmp;
 
-    strncpy_dir(unmunged_name,name, MAX_STRING_LEN);
+    strncpy_dir(unmunged_name,name,HUGE_STRING_LEN);
     unmunge_name(unmunged_name);
 
     if(!(d=opendir(name)))
         die(FORBIDDEN,unmunged_name,fd);
 
     strcpy(content_type,"text/html");
-    status = 200;
     if(!assbackwards) 
         send_http_header(fd);
 
-    if(header_only) return;
+    if(header_only) {
+      closedir(d);
+      return;
+    }
 
     bytes_sent = 0;
 
@@ -622,13 +649,15 @@ void index_directory(char *name, FILE *fd)
     head=NULL;
     while(dstruct=readdir(d)) {
         if(p = make_dir_entry(name,dstruct->d_name,fd)) {
-            p->next=head;
-            head=p;
+            p->next = head;
+            head = p;
             num_ent++;
         }
     }
-    if(!(ar=(struct ent **) malloc(num_ent*sizeof(struct ent *))))
+    if(!(ar=(struct ent **) malloc(num_ent*sizeof(struct ent *)))) {
+	closedir(d);
         die(NO_MEMORY,"index_directory",fd);
+    }
     p=head;
     x=0;
     while(p) {
@@ -650,6 +679,8 @@ void index_directory(char *name, FILE *fd)
          free(q->name);
          if(q->desc)
              free(q->desc);
+	 if(q->alt)
+	     free(q->alt);
          free(q);
          q=p;
      }
@@ -663,6 +694,8 @@ void index_directory(char *name, FILE *fd)
      }
 
      fputs("</BODY>",fd);
+     fflush(fd);
      bytes_sent += 7;
+     fflush(fd);
      log_transaction();
 }

@@ -1,12 +1,20 @@
 /*
  * http_access: Security options etc.
+ *
+ * All code contained herein is covered by the Copyright as distributed
+ * in the README file in the main directory of the distribution of 
+ * NCSA HTTPD.
  * 
- * Rob McCool
+ * Based on NCSA HTTPd 1.3 by Rob McCool
+ *
+ *  03-12-95 blong
+ *     Added patch to fix ALLOW_THEN_DENY
  * 
  */
 
 
 #include "httpd.h"
+#include "new.h"
 
 int in_domain(char *domain, char *what) {
     int dl=strlen(domain);
@@ -69,6 +77,7 @@ void check_dir_access(int x, int m, int *w, int *n) {
         auth_grpfile = sec[x].auth_grpfile;
 
     if(sec[x].order[m] == ALLOW_THEN_DENY) {
+	*w=0;
         if(find_allow(x,m))
             *w=1;
         if(find_deny(x,m))
@@ -95,15 +104,22 @@ void evaluate_access(char *p, struct stat *finfo, int m, int *allow,
     char errstr[MAX_STRING_LEN];
     register int x,y,z,n;
 
-    if(S_ISDIR(finfo->st_mode)) strncpy_dir(path,p, MAX_STRING_LEN);
+    if(S_ISDIR(finfo->st_mode)) strcpy_dir(path,p);
     else lim_strcpy(path,p, MAX_STRING_LEN);
 
     no2slash(path);
 
     num_dirs = count_dirs(path);
-    will_allow=1;need_auth=-1;
-    auth_type=NULL;auth_name=NULL;auth_pwfile=NULL;auth_grpfile=NULL;
+    will_allow = 1; 
+    need_auth = -1;
+    auth_type = NULL; 
+    auth_name = NULL;
+    auth_pwfile = NULL;
+    auth_grpfile = NULL;
     user[0] = '\0';
+    groupname[0] = '\0';
+    reset_mime_vars();
+
     for(x=0;x<num_dirs;x++) {
         opts[x] = OPT_ALL;
         override[x] = OR_ALL;
@@ -118,8 +134,8 @@ void evaluate_access(char *p, struct stat *finfo, int m, int *allow,
                         opts[y] = sec[x].opts;
                     override[y] = sec[x].override;
                 }
-            }
             check_dir_access(x,m,&will_allow,&need_auth);
+            }
         }
         else if(!strncmp(path,sec[x].d,strlen(sec[x].d))) {
             for(y=count_dirs(sec[x].d) - 1;y<num_dirs;y++) {
@@ -149,7 +165,7 @@ void evaluate_access(char *p, struct stat *finfo, int m, int *allow,
                                 goto bong;
                             realpath[bsz] = '\0';
                             if(realpath[0] != '/') {
-                                char t[256];
+                                char t[260];
                                 strcpy(t,"../");
                                 strcpy(&t[3],realpath);
                                 make_full_path(d,t,realpath);
@@ -195,7 +211,7 @@ void evaluate_access(char *p, struct stat *finfo, int m, int *allow,
                     goto gong;
                 realpath[bsz] = '\0';
                 if(realpath[0] != '/') {
-                    char t[256];
+                    char t[260];
                     strcpy(t,"../");
                     strcpy(&t[3],realpath);
                     make_full_path(path,t,realpath);
@@ -248,4 +264,33 @@ void kill_security() {
     }
 }
 
+/* This function should reset the security data structure to contain only
+   the information given in the access configuration file.  It should be 
+   called after any transactions */
+
+void reset_security() {
+    register int x,y,m;
+
+    for(x=num_sec_config;x<num_sec;x++) {
+        free(sec[x].d);
+        for(m=0;m<METHODS;m++) {
+            for(y=0;y<sec[x].num_allow[m];y++)
+                free(sec[x].allow[m][y]);
+            for(y=0;y<sec[x].num_deny[m];y++)
+                free(sec[x].deny[m][y]);
+            for(y=0;y<sec[x].num_auth[m];y++)
+                free(sec[x].auth[m][y]);
+        }
+        if(sec[x].auth_type)
+            free(sec[x].auth_type);
+        if(sec[x].auth_name)
+            free(sec[x].auth_name);
+        if(sec[x].auth_pwfile)
+            free(sec[x].auth_pwfile);
+        if(sec[x].auth_grpfile)
+            free(sec[x].auth_grpfile);
+    }
+
+   num_sec = num_sec_config;
+}
 
