@@ -1,37 +1,15 @@
 
-NCSA httpd 1.2 is now available via anonymous FTP from
-ftp://ftp.ncsa.uiuc.edu/Web/ncsa_httpd/current. Note that there is no
-longer a binary distributed for the DECstation MIPS machines running
-Ultrix as our DECstation 5000 died and it hasn't been fixed as of yet.
 
-NCSA httpd is an HTTP/1.0 compatible server for hypermedia documents.
-It runs on a plethora of UNIX systems. NCSA httpd is also compatible
-with the Common Gateway Interface which allows interactive document
-generation.
+Documentation for httpd has been moved online. See the URL 
+<A HREF="http://hoohoo.ncsa.uiuc.edu/">here</A> for online hypertext
+documentation including installation instructions, feature list,
+demonstration, etc.
 
-All of the documentation for NCSA httpd is online hypertext. See 
-http://hoohoo.ncsa.uiuc.edu/. If you cannot use a networked WWW browser to 
-read it, retrieve the file /Web/ncsa_httpd/current/httpd_docs.tar.Z from
-ftp.ncsa.uiuc.edu and use your WWW browser in local only mode to get things
-started.
+Documentation can also be found where you found this .tar file, in a file
+called httpd_docs.tar.Z.
 
-Note that the new features introduced with this release required some
-internal restructuring of the code. This may cause some bugs. If you
-are pleased with your current setup and do not need the new features
-you may consider waiting before upgrading in order to make sure that
-any problems (we expect none, but who ever does?) are worked out prior
-to your upgrade.
+--Rob, Marc, and Eric httpd@ncsa.uiuc.edu
 
-By popular demand I have written a number of tutorials about various
-aspects of NCSA httpd configuration. See
-http://hoohoo.ncsa.uiuc.edu/docs/tutorials/ for an index.
-
-Thanks all
---Rob and Eric
-
-httpd@ncsa.uiuc.edu
-
-----
 
 This code is in the public domain. Specifically, we give to the public
 domain all rights for future licensing of the source code, all resale
@@ -47,77 +25,4 @@ THE UNIVERSITY OF ILLINOIS GIVES NO WARRANTY, EXPRESSED OR IMPLIED,
 FOR THE SOFTWARE AND/OR DOCUMENTATION PROVIDED, INCLUDING, WITHOUT
 LIMITATION, WARRANTY OF MERCHANTABILITY AND WARRANTY OF FITNESS FOR A
 PARTICULAR PURPOSE.
-
-----
-
-All of the following information is available at
-http://hoohoo.ncsa.uiuc.edu/docs/Upgrade.html in hypertext form. You
-should probably read that instead of this primitive plaintext.
-
-New features
-
-    * The CGI interface is now revised to version 1.1.
-
-    * A new logfile format was agreed upon which should simplify the
-      lives of the authors of logfile analyzers if commonly adopted.
-
-    * CGI scripts are now allowed anywhere.
-
-    * The server side includes interface has been completely
-      rewritten. It is NOT compatible with your old INC SRV documents
-      but a filter is provided to transform your old documents into
-      the new format.
-
-    * There is a new access control option to disable symbolic links
-      only if the owner of the pointer is not the same as the
-      owner of that which is pointed to. This means your users can
-      have symbolic links to things they own, but not to dangerous
-      things like /etc.
-
-    * A new access control method called mutual-failure has been
-      added. This method is a bit unorthodox, but allows
-      you to allow hosts from one domain while excluding certain hosts
-      (such as public access machines) from that domain.
-
-    * Wildcard expressions are now allowed in various areas of server
-      configuration, to allow patterns to be specified. This is most
-      useful in the Directory directive.
-
-    * Directory indexing has been revamped. It looks much different,
-      and I've written a short tutorial on how to set it up.
-
-    * Access Control Files now allow the indexing directives as well
-      as the DefaultType directive.
-
-    * require user now allows quotes for PGP usernames with spaces.
-
-    * Server now explicitly kills CGI scripts when the client aborts
-      or upon timeout
-
-    * Server now verifies the DNS hostname it gets from the IP number
-      to prevent PTR spoofs.
-
-    * Support for 304 and If-modified-since.
-
-    * Support for CGI PUT and DELETE scripts. This will become
-      important later for group annotation features.
-
-Bug fixes
-
-All of the known bugs in 1.1 have now been fixed. Now it's time to
-find the ones I introduce with 1.2.
-
-    * Fixed problem running scripts in ServerMode inetd under IRIX.
-
-    * Fixed bad port problem under OSF/1.
-
-    * Inserted missing return statement for the IdentityCheck directive.
-
-    * Fixed problem whereby errors would stop being logged after a restart.
-
-    * Fixed 256 character limitation on CGI URLs.
-
-    * Access control fix from 1.1 integrated but moved in order to
-      allow certain CGI scripts to continue functioning.
-
 

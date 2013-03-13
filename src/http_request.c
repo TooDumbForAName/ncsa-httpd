@@ -21,7 +21,7 @@ void send_fd_timed_out() {
     char errstr[MAX_STRING_LEN];
 
     if(exit_callback) (*exit_callback)();
-    sprintf(errstr,"httpd: send timed out for %s",remote_host);
+    sprintf(errstr,"httpd: send timed out for %s",remote_name);
     log_error(errstr);
     log_transaction();
     fclose(stdin);

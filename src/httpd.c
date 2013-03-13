@@ -170,9 +170,6 @@ void standalone_main() {
             log_error("socket error: accept failed");
             goto retry;
         }
-        remote_logname = (!do_rfc931 ? NULL :
-                          rfc931((struct sockaddr_in *)&sa_client,&sa_server));
-
 	/* we do this here so that logs can be opened as root */
         if((pid = fork()) == -1)
             log_error("unable to fork new process");
@@ -190,6 +187,11 @@ void standalone_main() {
             dup2(csd,0);
             dup2(csd,1);
             close(sd);
+
+            remote_logname = (!do_rfc931 ? NULL :
+                              rfc931((struct sockaddr_in *)&sa_client,
+                                     &sa_server));
+
             /* Only try to switch if we're running as root */
             if(!getuid()) {
                 /* Now, make absolutely certain we don't have any privileges

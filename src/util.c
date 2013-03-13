@@ -19,8 +19,7 @@ char *get_time() {
 }
 
 char *gm_timestr_822(time_t sec) {
-    /* HUH??? Why is the GMT hardcode necessary? */
-    return ht_time(sec,"%A, %d-%h-%y %T GMT", 1);
+    return ht_time(sec,HTTP_TIME_FORMAT, 1);
 }
 
 char *ht_time(time_t t, char *fmt, int gmt) {
@@ -41,7 +40,7 @@ struct tm *get_gmtoff(long *tz) {
 
     tt = time(NULL);
     t = localtime(&tt);
-#ifdef BSD
+#if defined(BSD) && !defined(AUX) && !defined(APOLLO)
     *tz = t->tm_gmtoff;
 #else
     *tz = - timezone;
@@ -51,15 +50,11 @@ struct tm *get_gmtoff(long *tz) {
     return t;
 }
 
-/* What another pain in the ass. */
 
 static char *months[] = {
     "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
 };
 
-static int ydays[] = {
-    0,31,59,90,120,151,181,212,243,273,304,334
-};
 
 int find_month(char *mon) {
     register int x;
@@ -70,52 +65,61 @@ int find_month(char *mon) {
     return -1;
 }
 
-#define find_yday(mon,day) (ydays[mon] + day)
+/* Roy owes Rob beer. */
+/* This would be considerably easier if strptime or timegm were portable */
 
-int later_than(char *last_modified, char *ims) {
-    char idate[MAX_STRING_LEN], ldate[MAX_STRING_LEN];
-    char itime[MAX_STRING_LEN], ltime[MAX_STRING_LEN];
-    char w[MAX_STRING_LEN];
-    int lday,lmon,lyear, iday,imon,iyear, lhour,lmin, ihour,imin, x;
-    long lsec, isec;
+int later_than(struct tm *lms, char *ims) {
+    char *ip;
+    char mname[MAX_STRING_LEN];
+    int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0, x;
 
-    sscanf(ims,"%*s %s %s",idate,itime);
-    sscanf(last_modified,"%*s %s %s",ldate,ltime);
+    /* Whatever format we're looking at, it will start with weekday. */
+    /* Skip to first space. */
+    if(!(ip = strchr(ims,' ')))
+        return 0;
+    else
+        while(isspace(*ip))
+            ++ip;
 
-    getword(w,idate,'-');
-    sscanf(w,"%d",&iday);
-    getword(w,ldate,'-');
-    sscanf(w,"%d",&lday);
+    if(isalpha(*ip)) {
+        /* ctime */
+        sscanf(ip,"%s %d %d:%d:%d %*s %d",mname,&day,&hour,&min,&sec,&year);
+    }
+    else if(ip[2] == '-') {
+        /* RFC 850 (normal HTTP) */
+        char t[MAX_STRING_LEN];
+        sscanf(ip,"%s %d:%d:%d",t,&hour,&min,&sec);
+        t[2] = '\0';
+        day = atoi(t);
+        t[6] = '\0';
+        strcpy(mname,&t[3]);
+        x = atoi(&t[7]);
+        /* Prevent wraparound from ambiguity */
+        if(x < 70)
+            x += 100;
+        year = 1900 + x;
+    }
+    else {
+        /* RFC 822 */
+        sscanf(ip,"%d %s %d %d:%d:%d",&day,mname,&year,&hour,&min,&sec);
+    }
+    month = find_month(mname);
 
-    getword(w,idate,'-');
-    imon = find_month(w);
-    getword(w,ldate,'-');
-    lmon = find_month(w);
-
-    sscanf(idate,"%d",&iyear);
-    sscanf(ldate,"%d",&lyear);
-
-    x = lyear - iyear;
-    if(x > 0) return 0;
-    if(x < 0) return 1;
-
-    x = find_yday(lmon, lday) - find_yday(imon,iday);
-    if(x > 0) return 0;
-    if(x < 0) return 1;
-
-    sscanf(itime,"%d:%d:%ld",&ihour,&imin,&isec);
-    sscanf(ltime,"%d:%d:%ld",&lhour,&lmin,&lsec);
-
-    isec += (imin*60) + (ihour*3600);
-    lsec += (lmin*60) + (lhour*3600);
-
-    x = lsec - isec;
-    if(x > 0) return 0;
+    if((x = (1900+lms->tm_year) - year))
+        return x < 0;
+    if((x = lms->tm_mon - month))
+        return x < 0;
+    if((x = lms->tm_mday - day))
+        return x < 0;
+    if((x = lms->tm_hour - hour))
+        return x < 0;
+    if((x = lms->tm_min - min))
+        return x < 0;
+    if((x = lms->tm_sec - sec))
+        return x < 0;
 
     return 1;
 }
-
-
 
 
 /* Match = 0, NoMatch = 1, Abort = -1 */
@@ -420,6 +424,23 @@ void escape_url(char *url) {
     free(copy);
 }
 
+void escape_uri(char *url) {
+    register int x,y;
+    register char digit;
+    char *copy;
+
+    copy = strdup(url);
+            
+    for(x=0,y=0;copy[x];x++,y++) {
+        if(ind(":% ?+&",url[y] = copy[x]) != -1) {
+            c2x(copy[x],&url[y]);
+            y+=2;
+        }
+    }
+    url[y] = '\0';
+    free(copy);
+}
+
 void make_full_path(char *src1,char *src2,char *dst) {
     register int x,y;
 
@@ -576,6 +597,22 @@ int initgroups(const char *name, gid_t basegid)
 }
 #endif
 
+#ifdef NEED_WAITPID
+/* From ikluft@amdahl.com */
+/* this is not ideal but it works for SVR3 variants */
+/* httpd does not use the options so this doesn't implement them */
+int waitpid(pid_t pid, int *statusp, int options)
+{
+    int tmp_pid;
+    if ( kill ( pid,0 ) == -1) {
+        errno=ECHILD;
+        return -1;
+    }
+    while ((( tmp_pid = wait(statusp)) != pid) && ( tmp_pid != -1 ));
+    return tmp_pid;
+}
+#endif
+
 int ind(char *s, char c) {
     register int x;
 
@@ -665,14 +702,18 @@ void get_remote_host(int fd) {
         return;
     }
     iaddr = &(((struct sockaddr_in *)&addr)->sin_addr);
+#ifndef MINIMAL_DNS
     hptr = gethostbyaddr((char *)iaddr, sizeof(struct in_addr), AF_INET);
     if(hptr) {
         remote_host = strdup(hptr->h_name);
         str_tolower(remote_host);
         remote_name = remote_host;
     }
-    else remote_host = NULL;
+    else 
+#endif
+        remote_host = NULL;
 
+#ifdef MAXIMUM_DNS
     /* Grrr. Check THAT name to make sure it's really the name of the addr. */
     /* Code from Harald Hanche-Olsen <hanche@imf.unit.no> */
     if(remote_host) {
@@ -687,6 +728,7 @@ void get_remote_host(int fd) {
         if((!hptr) || (!(*haddr)))
             remote_host = NULL;
     }
+#endif
     remote_ip = inet_ntoa(*iaddr);
     if(!remote_host)
         remote_name = remote_ip;
@@ -711,6 +753,8 @@ char *get_remote_logname(FILE *fd) {
                                     (struct sockaddr_in *) & sa_server);
     }
     else result = "unknown";
+
+    return result; /* robm=pinhead */
 }
 
 void get_local_host()

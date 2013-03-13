@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/signal.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define USER_FILE "/usr/local/etc/httpd/conf/.htpasswd"
 #define WIZARD "surobm"

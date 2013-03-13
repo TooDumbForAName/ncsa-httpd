@@ -188,6 +188,12 @@ void add_opts(char *optstr, char *path, FILE *out) {
             opts |= ICONS_ARE_LINKS;
         else if(!strcasecmp(w,"ScanHTMLTitles"))
             opts |= SCAN_HTML_TITLES;
+        else if(!strcasecmp(w,"SuppressLastModified"))
+            opts |= SUPPRESS_LAST_MOD;
+        else if(!strcasecmp(w,"SuppressSize"))
+            opts |= SUPPRESS_SIZE;
+        else if(!strcasecmp(w,"SuppressDescription"))
+            opts |= SUPPRESS_DESC;
         else if(!strcasecmp(w,"None"))
             opts = 0;
     }
@@ -232,7 +238,7 @@ char *find_item(struct item *list, char *path, int path_only) {
 }
 
 #define find_icon(p,t) find_item(icon_list,p,t)
-#define find_alt(p) find_item(alt_list,p,0)
+#define find_alt(p,t) find_item(alt_list,p,t)
 #define find_desc(p) find_item(desc_list,p,0)
 #define find_header(p) find_item(hdr_list,p,0)
 #define find_readme(p) find_item(rdme_list,p,0)
@@ -292,7 +298,7 @@ char *find_title(char *filename) {
     char titlebuf[MAX_STRING_LEN], *find = "<TITLE>";
     char filebak[MAX_STRING_LEN];
     FILE *thefile;
-    int x,n,p;
+    int x,y,n,p;
 
     content_encoding[0] = '\0';
     strcpy(filebak,filename);
@@ -307,6 +313,10 @@ char *find_title(char *filename) {
                 if(!find[++p]) {
                     if((p = ind(&titlebuf[++x],'<')) != -1)
                         titlebuf[x+p] = '\0';
+                    /* Scan for line breaks for Tanmoy's secretary */
+                    for(y=x;titlebuf[y];y++)
+                        if((titlebuf[y] == CR) || (titlebuf[y] == LF))
+                            titlebuf[y] = ' ';
                     return strdup(&titlebuf[x]);
                 }
             } else p=0;
@@ -315,6 +325,31 @@ char *find_title(char *filename) {
     }
     content_encoding[0] = '\0';
     return NULL;
+}
+
+
+void escape_html(char *fn) {
+    register int x,y;
+    char copy[MAX_STRING_LEN];
+
+    strcpy(copy,fn);
+    for(x=0,y=0;copy[y];x++,y++) {
+        if(copy[y] == '<') {
+            strcpy(&fn[x],"&lt;");
+            x+=3;
+        }
+        else if(copy[y] == '>') {
+            strcpy(&fn[x],"&gt;");
+            x+=3;
+        }
+        else if(copy[y] == '&') {
+            strcpy(&fn[x],"&amp;");
+            x+=4;
+        }
+        else
+            fn[x] = copy[y];
+    }
+    fn[x] = '\0';
 }
 
 struct ent *make_dir_entry(char *path, char *name, FILE *out) {
@@ -336,11 +371,11 @@ struct ent *make_dir_entry(char *path, char *name, FILE *out) {
         die(NO_MEMORY,"make_dir_entry",out);
 
     if(dir_opts & FANCY_INDEXING) {
-        p->alt = find_alt(t);
         if((!(dir_opts & FANCY_INDEXING)) || stat(t,&finfo) == -1) {
             strcpy(p->name,name);
             p->size = -1;
             p->icon = NULL;
+            p->alt = NULL;
             p->desc = NULL;
             p->lm = -1;
         }
@@ -349,12 +384,14 @@ struct ent *make_dir_entry(char *path, char *name, FILE *out) {
             if(S_ISDIR(finfo.st_mode)) {
                 if(!(p->icon = find_icon(t,1)))
                     p->icon = find_icon("^^DIRECTORY^^",1);
-                p->alt = "DIR";
+                if(!(p->alt = find_alt(t,1)))
+                    p->alt = "DIR";
                 p->size = -1;
                 strcpy_dir(p->name,name);
             }
             else {
                 p->icon = find_icon(t,0);
+                p->alt = find_alt(t,0);
                 p->size = finfo.st_size;
                 strcpy(p->name,name);
             }
@@ -399,6 +436,31 @@ void send_size(size_t size, FILE *fd) {
     }
 }
 
+void terminate_description(char *desc) {
+    int maxsize = 23;
+    register int x;
+    
+    if(dir_opts & SUPPRESS_LAST_MOD) maxsize += 17;
+    if(dir_opts & SUPPRESS_SIZE) maxsize += 7;
+
+    for(x=0;desc[x] && maxsize;x++) {
+        if(desc[x] == '<') {
+            while(desc[x] != '>') {
+                if(!desc[x]) {
+                    maxsize = 0;
+                    break;
+                }
+                ++x;
+            }
+        }
+        else --maxsize;
+    }
+    if(!maxsize) {
+        desc[x] = '>';
+        desc[x+1] = '\0';
+    }
+
+}
 
 void output_directories(struct ent **ar,int n,char *name,FILE *fd)
 {
@@ -417,8 +479,14 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
         bytes_sent += 5;
         if(tp = find_icon("^^BLANKICON^^",1))
             bytes_sent += fprintf(fd,"<IMG SRC=\"%s\" ALT=\"     \"> ",tp);
-        bytes_sent += fprintf(fd,
-"Name                   Last modified     Size  Description%c<HR>%c",LF,LF);
+        bytes_sent += fprintf(fd,"Name                   ");
+        if(!(dir_opts & SUPPRESS_LAST_MOD))
+            bytes_sent += fprintf(fd,"Last modified     ");
+        if(!(dir_opts & SUPPRESS_SIZE))
+            bytes_sent += fprintf(fd,"Size  ");
+        if(!(dir_opts & SUPPRESS_DESC))
+            bytes_sent += fprintf(fd,"Description");
+        bytes_sent += fprintf(fd,"%c<HR>%c",LF,LF);
     }
     else {
         fputs("<UL>",fd);
@@ -432,6 +500,7 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
             if(t[0] == '\0') {
                 t[0] = '/'; t[1] = '\0';
             }
+            escape_uri(t);
             sprintf(anchor,"<A HREF=\"%s\">",t);
             strcpy(t2,"Parent Directory</A>");
         }
@@ -442,8 +511,10 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
                 t2[21] = '>';
                 t2[22] = '\0';
             }
+            /* screws up formatting, but some need it. should fix. */
+/*            escape_html(t2); */
             strcat(t2,"</A>");
-            escape_url(t);
+            escape_uri(t);
             sprintf(anchor,"<A NAME=\"%s\" HREF=\"%s\">",t,t);
         }
         escape_url(t);
@@ -462,25 +533,28 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
             }
             bytes_sent += fprintf(fd," %s",anchor);
             bytes_sent += fprintf(fd,"%-27.27s",t2);
-            if(ar[x]->lm != -1) {
-                struct tm *ts = localtime(&ar[x]->lm);
-                strftime(t,MAX_STRING_LEN,"%d-%h-%y %H:%M  ",ts);
-                fputs(t,fd);
-                bytes_sent += strlen(t);
-            }
-            else {
-                fputs("                 ",fd);
-                bytes_sent += 17;
-            }
-            send_size(ar[x]->size,fd);
-            fputs("  ",fd);
-            bytes_sent += 2;
-            if(ar[x]->desc) {
-                if(strlen(ar[x]->desc) > 23) {
-                    ar[x]->desc[23] = '>';
-                    ar[x]->desc[24] = '\0';
+            if(!(dir_opts & SUPPRESS_LAST_MOD)) {
+                if(ar[x]->lm != -1) {
+                    struct tm *ts = localtime(&ar[x]->lm);
+                    strftime(t,MAX_STRING_LEN,"%d-%b-%y %H:%M  ",ts);
+                    fputs(t,fd);
+                    bytes_sent += strlen(t);
                 }
-                bytes_sent += fprintf(fd,"%s",ar[x]->desc);
+                else {
+                    fputs("                 ",fd);
+                    bytes_sent += 17;
+                }
+            }
+            if(!(dir_opts & SUPPRESS_SIZE)) {
+                send_size(ar[x]->size,fd);
+                fputs("  ",fd);
+                bytes_sent += 2;
+            }
+            if(!(dir_opts & SUPPRESS_DESC)) {
+                if(ar[x]->desc) {
+                    terminate_description(ar[x]->desc);
+                    bytes_sent += fprintf(fd,"%s",ar[x]->desc);
+                }
             }
         }
         else

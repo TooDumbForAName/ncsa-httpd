@@ -14,7 +14,7 @@ struct mime_ext {
     struct mime_ext *next;
 };
 
-#if 0
+#if 1
 #define hash(i) (isalpha(i) ? (tolower(i)) - 'a' : 26)
 #else
 #define hash(i) ((i) % 27)
@@ -307,12 +307,17 @@ void set_content_length(int l) {
 }
 
 void set_last_modified(time_t t, FILE *out) {
-    strcpy(last_modified,gm_timestr_822(t));
+    struct tm *tms;
+    char ts[MAX_STRING_LEN];
+
+    tms = gmtime(&t);
+    strftime(ts,MAX_STRING_LEN,HTTP_TIME_FORMAT,tms);
+    strcpy(last_modified,ts);
 
     if(!ims[0])
         return;
 
-    if(later_than(last_modified, ims))
+    if(later_than(tms, ims))
         die(USE_LOCAL_COPY,NULL,out);
 }
 

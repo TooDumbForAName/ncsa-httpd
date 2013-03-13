@@ -15,6 +15,7 @@ char *crypt(char *pw, char *salt);
 #define NO_KILLPG
 #undef NO_SETSID
 #define bzero(a,b) memset(a,0,b)
+#define getwd(d) getcwd(d,MAX_STRING_LEN)
 
 #elif defined(IRIX)
 #undef BSD
@@ -102,9 +103,10 @@ typedef int pid_t;
 #elif defined(CONVEXOS)
 #define BSD
 #define NEED_STRDUP
+#define getwd(d) getcwd(d,MAX_STRING_LEN)
 
 #elif defined(AUX)
-#undef BSD
+#define BSD
 #undef NO_KILLPG
 #undef NO_SETSID
 #define NEED_STRDUP
@@ -119,6 +121,22 @@ typedef int pid_t;
 #define bzero(a,b) memset(a,0,b)
 
 #elif defined(__NetBSD__)
+#define BSD
+#undef NO_KILLPG
+#undef NO_SETSID
+
+#elif defined(UTS21)
+#undef BSD
+#undef NO_KILLPG
+#define NO_SETSID
+#define NEED_WAITPID
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+#define strftime(buf,bufsize,fmt,tm)    ascftime(buf,fmt,tm)
+#include <sys/types.h>
+
+#elif defined(APOLLO)
 #define BSD
 #undef NO_KILLPG
 #undef NO_SETSID
@@ -245,9 +263,12 @@ typedef int pid_t;
 /* The number of header lines we will accept from a client */
 #define MAX_HEADERS 200
 
+/* Hi Roy. */
+#define HTTP_TIME_FORMAT "%A, %d-%b-%y %T GMT"
+
 /* ------------------------------ error types ------------------------------ */
 
-#define SERVER_VERSION "NCSA/1.2"
+#define SERVER_VERSION "NCSA/1.3"
 #define SERVER_PROTOCOL "HTTP/1.0"
 #define SERVER_SUPPORT "httpd@ncsa.uiuc.edu"
 
@@ -303,6 +324,9 @@ typedef int pid_t;
 #define FANCY_INDEXING 1
 #define ICONS_ARE_LINKS 2
 #define SCAN_HTML_TITLES 4
+#define SUPPRESS_LAST_MOD 8
+#define SUPPRESS_SIZE 16
+#define SUPPRESS_DESC 32
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -465,7 +489,8 @@ void send_fd_timed_out();
 int find_script(char *method, char *name, char *args, int in, FILE *out);
 
 /* http_get */
-void send_file(char *file,FILE *fd, char *path_args, char *args);
+void send_file(char *file, FILE *fd, struct stat *fi, 
+               char *path_args, char *args);
 void process_include(FILE *f, FILE *fd, char *incstring, char *args);
 void send_node(char *name, char *args, int in, FILE *fd);
 void process_get(int in, FILE *out, char *m, char *url, char *args);
@@ -552,7 +577,7 @@ void send_parsed_file(char *file, FILE *fd, char *path_args, char *args,
 /* util */
 void chdir_file(char *file);
 void http2cgi(char *w);
-int later_than(char *l, char *i);
+int later_than(struct tm *tms, char *i);
 int strcmp_match(char *str, char *exp);
 int is_matchexp(char *str);
 void strsubfirst(int start,char *dest, char *src);

@@ -10,7 +10,7 @@
 #define STARTING_SEQUENCE "<!--#"
 #define ENDING_SEQUENCE "-->"
 #define DEFAULT_ERROR_MSG "[an error occurred while processing this directive]"
-#define DEFAULT_TIME_FORMAT "%A, %d-%h-%y %T %Z"
+#define DEFAULT_TIME_FORMAT "%A, %d-%b-%y %T %Z"
 #define SIZEFMT_BYTES 0
 #define SIZEFMT_KMG 1
 
@@ -37,7 +37,7 @@ char **add_include_vars(char **env,char *file, char *path_args, char *args,
 
     if(stat(file,&finfo) != -1) {
         lm = finfo.st_mtime;
-        env[x++] = make_env_str("LAST_MODIFIED",ht_time(lm,timefmt,1),out);
+        env[x++] = make_env_str("LAST_MODIFIED",ht_time(lm,timefmt,0),out);
     }
     strcpy(ufile,file);
     unmunge_name(ufile);
@@ -169,7 +169,13 @@ int get_directive(FILE *in,char *d) {
 
 /* --------------------------- Action handlers ---------------------------- */
 
-int send_included_file(char *file, FILE *out, char *fn) {
+
+void send_parsed_content(char *file, FILE *f, FILE *fd, 
+                         char *path_args, char *args,
+                         char **env,int noexec);
+
+int send_included_file(char *file, FILE *out, char **env, char *fn) 
+{
     FILE *f;
     struct stat finfo;
     int allow;char op,i;
@@ -181,7 +187,9 @@ int send_included_file(char *file, FILE *out, char *fn) {
         return -1;
     set_content_type(file);
     if((op & OPT_INCLUDES) && (!strcmp(content_type,INCLUDES_MAGIC_TYPE))) {
-        send_parsed_file(file,out,"","",op & OPT_INCNOEXEC);
+        if(!(f = fopen(file,"r")))
+            return -1;
+        send_parsed_content(file,f,out,"","",env,op & OPT_INCNOEXEC);
         chdir_file(fn); /* grumble */
     }
     else if(!strcmp(content_type,CGI_MAGIC_TYPE))
@@ -195,7 +203,7 @@ int send_included_file(char *file, FILE *out, char *fn) {
     return 0;
 }
 
-int handle_include(FILE *in, FILE *out, char *fn, char *error) {
+int handle_include(FILE *in, FILE *out, char *fn, char **env, char *error) {
     char tag[MAX_STRING_LEN],errstr[MAX_STRING_LEN];
     char *tag_val;
 
@@ -208,7 +216,7 @@ int handle_include(FILE *in, FILE *out, char *fn, char *error) {
             getparents(tag_val); /* get rid of any nasties */
             getwd(dir);
             make_full_path(dir,tag_val,to_send);
-            if(send_included_file(to_send,out,fn)) {
+            if(send_included_file(to_send,out,env,fn)) {
                 sprintf(errstr,"unable to include %s in parsed file %s",
                         tag_val, fn);
                 log_error_noclose(errstr);
@@ -220,7 +228,7 @@ int handle_include(FILE *in, FILE *out, char *fn, char *error) {
                 bytes_sent += fprintf(out,"%s",error);
                 log_error_noclose(errstr);
             }  
-            else if(send_included_file(tag_val,out,fn)) {
+            else if(send_included_file(tag_val,out,env,fn)) {
                 sprintf(errstr,"unable to include %s in parsed file %s",
                         tag_val, fn);
                 log_error_noclose(errstr);
@@ -422,7 +430,7 @@ int handle_config(FILE *in, FILE *out, char *file, char *error, char *tf,
             env[1] = make_env_str("DATE_GMT",ht_time(date,tf,1),out);
             if(!strncmp(env[2],"LAST_MODIFIED",13)) {
                 free(env[2]);
-                env[2] = make_env_str("LAST_MODIFIED",ht_time(lm,tf,1),out);
+                env[2] = make_env_str("LAST_MODIFIED",ht_time(lm,tf,0),out);
             }
         }
         else if(!strcmp(tag,"sizefmt")) {
@@ -544,13 +552,70 @@ int handle_flastmod(FILE *in, FILE *out, char *file, char *error, char *tf,
 
 /* -------------------------- The main function --------------------------- */
 
+/* This is a stub which parses a file descriptor. */
+
+void send_parsed_content(char *file, FILE *f, FILE *fd, 
+                         char *path_args, char *args,
+                         char **env,int noexec)
+{
+    char directive[MAX_STRING_LEN], error[MAX_STRING_LEN], c;
+    char timefmt[MAX_STRING_LEN], errstr[MAX_STRING_LEN];
+    int ret, sizefmt;
+
+    strcpy(error,DEFAULT_ERROR_MSG);
+    strcpy(timefmt,DEFAULT_TIME_FORMAT);
+    sizefmt = SIZEFMT_KMG;
+
+    chdir_file(file);
+
+    while(1) {
+        if(!find_string(f,STARTING_SEQUENCE,fd)) {
+            if(get_directive(f,directive))
+                return;
+            if(!strcmp(directive,"exec")) {
+                if(noexec) {
+                    sprintf(errstr,"httpd: exec used but not allowed in %s",
+                            file);
+                    log_error_noclose(errstr);
+                    bytes_sent += fprintf(fd,"%s",error);
+                    ret = find_string(f,ENDING_SEQUENCE,NULL);
+                } else 
+                    ret=handle_exec(f,fd,file,path_args,args,error,env);
+            } 
+            else if(!strcmp(directive,"config"))
+                ret=handle_config(f,fd,file,error,timefmt,&sizefmt,env);
+            else if(!strcmp(directive,"include"))
+                ret=handle_include(f,fd,file,env,error);
+            else if(!strcmp(directive,"echo"))
+                ret=handle_echo(f,fd,file,error,env);
+            else if(!strcmp(directive,"fsize"))
+                ret=handle_fsize(f,fd,file,error,sizefmt,env);
+            else if(!strcmp(directive,"flastmod"))
+                ret=handle_flastmod(f,fd,file,error,timefmt,env);
+            else {
+                sprintf(errstr,"httpd: unknown directive %s in parsed doc %s",
+                        directive,file);
+                log_error_noclose(errstr);
+                bytes_sent += fprintf(fd,"%s",error);
+                ret=find_string(f,ENDING_SEQUENCE,NULL);
+            }
+            if(ret) {
+                sprintf(errstr,"httpd: premature EOF in parsed file %s",file);
+                log_error_noclose(errstr);
+                return;
+            }
+        } else 
+            return;
+    }
+}
+
+/* Called by send_file */
+
 void send_parsed_file(char *file, FILE *fd, char *path_args, char *args,
                       int noexec) 
 {
-    char directive[MAX_STRING_LEN], error[MAX_STRING_LEN], c, **env;
-    char timefmt[MAX_STRING_LEN], errstr[MAX_STRING_LEN];
-    int ret, sizefmt;
     FILE *f;
+    char **env;
 
     if(!(f=fopen(file,"r"))) {
         log_reason("file permissions deny server access",file);
@@ -568,52 +633,10 @@ void send_parsed_file(char *file, FILE *fd, char *path_args, char *args,
     assbackwards = 1; /* make sure no headers get inserted anymore */
     alarm(timeout);
 
-    strcpy(error,DEFAULT_ERROR_MSG);
-    strcpy(timefmt,DEFAULT_TIME_FORMAT);
-    sizefmt = SIZEFMT_KMG;
-    chdir_file(file);
-    env = add_include_vars(in_headers_env,file,path_args,args,timefmt,fd);
+    env = add_include_vars(in_headers_env,file,path_args,args,
+                           DEFAULT_TIME_FORMAT,fd);
     env = add_common_vars(env,fd);
 
-    while(1) {
-        if(!find_string(f,STARTING_SEQUENCE,fd)) {
-            if(get_directive(f,directive))
-                goto bye;
-            if(!strcmp(directive,"exec")) {
-                if(noexec) {
-                    sprintf(errstr,"httpd: exec used but not allowed in %s",
-                            file);
-                    log_error_noclose(errstr);
-                    bytes_sent += fprintf(fd,"%s",error);
-                    ret = find_string(f,ENDING_SEQUENCE,NULL);
-                } else 
-                    ret=handle_exec(f,fd,file,path_args,args,error,env);
-            } 
-            else if(!strcmp(directive,"config"))
-                ret=handle_config(f,fd,file,error,timefmt,&sizefmt,env);
-            else if(!strcmp(directive,"include"))
-                ret=handle_include(f,fd,file,error);
-            else if(!strcmp(directive,"echo"))
-                ret=handle_echo(f,fd,file,error,env);
-            else if(!strcmp(directive,"fsize"))
-                ret=handle_fsize(f,fd,file,error,sizefmt,env);
-            else if(!strcmp(directive,"flastmod"))
-                ret=handle_flastmod(f,fd,file,error,timefmt,env);
-            else {
-                sprintf(errstr,"httpd: unknown directive %s in parsed doc %s",
-                        directive,file);
-                log_error_noclose(errstr);
-                bytes_sent += fprintf(fd,"%s",error);
-                ret=find_string(f,ENDING_SEQUENCE,NULL);
-            }
-            if(ret) {
-                sprintf(errstr,"httpd: premature EOF in parsed file %s",file);
-                log_error_noclose(errstr);
-                goto bye;
-            }
-        } else 
-            goto bye;
-    }
-  bye:
+    send_parsed_content(file,f,fd,path_args,args,env,noexec);
     free_env(env);
 }

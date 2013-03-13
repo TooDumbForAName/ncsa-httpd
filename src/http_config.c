@@ -165,9 +165,9 @@ void process_server_config(FILE *errors) {
                 timeout = atoi(l);
             else if(!strcasecmp(w,"IdentityCheck")) {
                 cfg_getword(w,l);
-                if(!strcmp(w,"on"))
+                if(!strcasecmp(w,"on"))
                     do_rfc931 = 1;
-                else if(!strcmp(w,"off"))
+                else if(!strcasecmp(w,"off"))
                     do_rfc931 = 0;
                 else {
                     fprintf(errors,"Syntax error on line %d of %s:\n",n,
@@ -502,7 +502,11 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
     sec[x].override = or;
     if(!(sec[x].d = (char *)malloc((sizeof(char)) * (strlen(dir) + 2))))
         die(NO_MEMORY,"parse_access_dir",out);
-    strcpy_dir(sec[x].d,dir);
+    if(is_matchexp(dir))
+        strcpy(sec[x].d,dir);
+    else
+        strcpy_dir(sec[x].d,dir);
+
     sec[x].auth_type = NULL;
     sec[x].auth_name = NULL;
     sec[x].auth_pwfile = NULL;
@@ -533,6 +537,8 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                     sec[x].override |= OR_FILEINFO;
                 else if(!strcasecmp(w,"AuthConfig"))
                     sec[x].override |= OR_AUTHCFG;
+                else if(!strcasecmp(w,"Indexes"))
+                    sec[x].override |= OR_INDEXES;
                 else if(!strcasecmp(w,"None"))
                     sec[x].override = OR_NONE;
                 else if(!strcasecmp(w,"All")) 

@@ -6,11 +6,17 @@
 # 2.0 or later, as 1.40 seems to create bad code for the Sun 4.
 CC= gcc 
 
-# For optimization
-CFLAGS= -O2
-# For debugging information
-#CFLAGS= -g -DPEM_AUTH 
-#CFLAGS= -g
+# CFLAGS, compile flags.
+
+# If you want no reverse hostname resolution, use -DMINIMAL_DNS
+# If you want to have more secure hostname resolution at the cost of some 
+# performance, use -DMAXIMUM_DNS
+# If you want the optional PEM/PGP authentication, use -DPEM_AUTH
+# If you want to have the server check the execute bit of an HTML file to
+# determine if it is a parsed file, use -DXBITHACK
+ 
+#CFLAGS= -O2
+CFLAGS= -g
 
 # Place here any extra libraries you may need to link to. You
 # shouldn't have to.
@@ -47,6 +53,7 @@ AUX_CFLAGS= -DSUNOS4
 #AUX_CFLAGS= -DLINUX
 # For A/UX
 #AUX_CFLAGS= -DAUX
+#EXTRA_LIBS= -lbsd -lposix -s
 # For SCO ODT
 # libcrypt_i available from sosco.sco.com, files /SLS/lng225b.Z and
 # /SLS/lng225b.ltr.Z
@@ -55,6 +62,12 @@ AUX_CFLAGS= -DSUNOS4
 # For SVR4
 #AUX_CFLAGS= -DSVR4
 #EXTRA_LIBS= -lsocket -lnsl -lc
+# For Amdahl UTS 2.1
+# -Xa enables ANSI mode, -eft is expanded types
+#AUX_CFLAGS= -Xa -eft -DUTS21
+#EXTRA_LIBS= -lsocket -lbsd -la
+# For HP/Apollo Domain/OS
+#AUX_CFLAGS= -DAPOLLO
 
 # Place here any flags you may need upon linking, such as a flag to
 # prevent dynamic linking (if desired)
@@ -106,4 +119,4 @@ tar: $(OBJS)
 $(OBJS): Makefile httpd.h
 
 clean:
-	rm -f ../httpd httpd $(OBJS) *pure*
+	rm -f httpd $(OBJS) *pure*

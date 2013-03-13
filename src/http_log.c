@@ -56,20 +56,7 @@ void record_request(char *cmd_line) {
     bytes_sent = -1;
 
     strcpy(the_request,cmd_line);
-#if 0
-    if(!do_rfc931)
-        fprintf(xfer_log, "%s [%s] %s\n", remote_name, get_time(), cmd_line);
-    else
-        fprintf(xfer_log, "%s@%s [%s] %s\n", remote_logname, remote_name, 
-                get_time(), cmd_line);
-    fclose(xfer_log); /* we should be done with it... */
-#endif
 }
-
-/* NEXT MUST DIE. */
-static char *mon[] = {
-    "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
-};
 
 void log_transaction() {
     char str[HUGE_STRING_LEN];
@@ -82,11 +69,7 @@ void log_transaction() {
     if(timz < 0) 
         timz = -timz;
 
-    sprintf(tstr,"%2d/%s/%4d:%2d:%2d:%2d",
-            t->tm_mday,mon[t->tm_mon],1900 + t->tm_year,
-            t->tm_hour,t->tm_min,t->tm_sec);
-
-    strftime(tstr,MAX_STRING_LEN,"%d/%h/%Y:%H:%M:%S",t);
+    strftime(tstr,MAX_STRING_LEN,"%d/%b/%Y:%H:%M:%S",t);
 
     sprintf(str,"%s %s %s [%s %c%02d%02d] \"%s\" ",
             remote_name,
@@ -218,7 +201,7 @@ void die(int type, char *err_string, FILE *fd) {
         fprintf(fd,"request.<P>%c",LF);
         fprintf(fd,"Please contact the server administrator,%c",LF);
         fprintf(fd," %s ",server_admin);
-        fprintf(fd,"and inform them of the time the error occured, and%c",LF);
+        fprintf(fd,"and inform them of the time the error occurred, and%c",LF);
         fprintf(fd,"anything you might have done that may have caused%c",LF);
         fprintf(fd,"the error.<P>%c",LF);
         break;

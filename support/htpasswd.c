@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/signal.h>
+#include <stdlib.h>
+#include <time.h>
 
 #define LF 10
 #define CR 13
@@ -77,7 +79,6 @@ to64(s, v, n)
     }
 }
 
-char *getpass(char *prompt); /* ugh */
 char *crypt(char *pw, char *salt); /* why aren't these prototyped in include */
 
 void add_password(char *user, FILE *f) {

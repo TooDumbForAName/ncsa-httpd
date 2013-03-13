@@ -18,7 +18,11 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifndef pyr
 #include <stdlib.h>
+#else
+#include <ctype.h>
+#endif
 
 #define CONF_FILE "/usr/local/etc/httpd/conf/imagemap.conf"
 

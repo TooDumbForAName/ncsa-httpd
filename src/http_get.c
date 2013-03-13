@@ -14,16 +14,20 @@ int allow;
 char allow_options;
 
 
-void send_file(char *file, FILE *fd, char *path_args, char *args) {
+void send_file(char *file, FILE *fd, struct stat *fi, 
+               char *path_args, char *args) 
+{
     FILE *f;
-    struct stat finfo;
 
     set_content_type(file);
 
-    if((allow_options & OPT_INCLUDES) && 
-       (!strcmp(content_type,INCLUDES_MAGIC_TYPE)) &&
-       (!content_encoding[0]))
-        {
+    if((allow_options & OPT_INCLUDES) && (!content_encoding[0])) {
+#ifdef XBITHACK
+        if((fi->st_mode & S_IXUSR) ||
+           (!strcmp(content_type,INCLUDES_MAGIC_TYPE))) {
+#else
+        if(!strcmp(content_type,INCLUDES_MAGIC_TYPE)) {
+#endif
             status = 200;
             bytes_sent = 0;
             send_parsed_file(file,fd,path_args,args,
@@ -31,6 +35,7 @@ void send_file(char *file, FILE *fd, char *path_args, char *args) {
             log_transaction();
             return;
         }
+    }
     if(!(f=fopen(file,"r"))) {
         log_reason("file permissions deny server access",file);
         unmunge_name(file);
@@ -39,9 +44,8 @@ void send_file(char *file, FILE *fd, char *path_args, char *args) {
     status = 200;
     bytes_sent = 0;
     if(!assbackwards) {
-        fstat(fileno(f),&finfo);
-        set_content_length(finfo.st_size);
-        set_last_modified(finfo.st_mtime,fd);
+        set_content_length(fi->st_size);
+        set_last_modified(fi->st_mtime,fd);
         send_http_header(fd);
     }
     num_includes=0;
@@ -147,6 +151,7 @@ void send_node(char *file, char *args, int in, FILE *fd)
             strcpy_dir(ifile,file);
             unmunge_name(ifile);
             construct_url(url,ifile);
+            escape_url(url);
             die(REDIRECT,url,fd);
         }
         make_full_path(file,index_name,ifile);
@@ -164,12 +169,12 @@ void send_node(char *file, char *args, int in, FILE *fd)
             if(!strcmp(content_type,CGI_MAGIC_TYPE))
                 send_cgi("GET",ifile,pa,args,&finfo,in,fd);
             else
-                send_file(ifile,fd,pa,args);
+                send_file(ifile,fd,&finfo,pa,args);
         }
         return;
     }
     if(S_ISREG(finfo.st_mode))
-        send_file(file,fd,pa,args);
+        send_file(file,fd,&finfo,pa,args);
     else {
         log_reason("improper file type",file);
         unmunge_name(file);

@@ -109,19 +109,27 @@ void evaluate_access(char *p, struct stat *finfo, int m, int *allow,
         override[x] = OR_ALL;
     }
 
+    n=num_dirs-1;
     for(x=0;x<num_sec;x++) {
-        if((is_matchexp(path) ? strcmp_match(path,sec[x].d)
-                              : !strncmp(path,sec[x].d,strlen(sec[x].d))))
-            {
-                for(y=count_dirs(sec[x].d) - 1;y<num_dirs;y++) {
+        if(is_matchexp(sec[x].d)) {
+            if(!strcmp_match(path,sec[x].d)) {
+                for(y=0;y<num_dirs;y++) {
                     if(!(sec[x].opts & OPT_UNSET))
                         opts[y] = sec[x].opts;
                     override[y] = sec[x].override;
                 }
-                check_dir_access(x,m,&will_allow,&need_auth);
             }
+            check_dir_access(x,m,&will_allow,&need_auth);
+        }
+        else if(!strncmp(path,sec[x].d,strlen(sec[x].d))) {
+            for(y=count_dirs(sec[x].d) - 1;y<num_dirs;y++) {
+                if(!(sec[x].opts & OPT_UNSET))
+                    opts[y] = sec[x].opts;
+                override[y] = sec[x].override;
+            }
+            check_dir_access(x,m,&will_allow,&need_auth);
+        }
     }
-    n=num_dirs-1;
     if((override[n]) || (!(opts[n] & OPT_SYM_LINKS)) || 
        (opts[n] & OPT_SYM_OWNER))
         {
@@ -175,7 +183,7 @@ void evaluate_access(char *p, struct stat *finfo, int m, int *allow,
             }
         }
     if((!(S_ISDIR(finfo->st_mode))) && 
-       ((!(opts[n] & OPT_SYM_LINKS)) || (opts[x] & OPT_SYM_OWNER))) {
+       ((!(opts[n] & OPT_SYM_LINKS)) || (opts[n] & OPT_SYM_OWNER))) {
         struct stat fi,lfi;
         lstat(path,&fi);
         if(!(S_ISREG(fi.st_mode))) {

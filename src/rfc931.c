@@ -13,6 +13,10 @@
 static char sccsid[] = "@(#) rfc931.c 1.8 93/12/13 22:23:20";
 #endif
 
+#ifndef _HPUX_SOURCE
+#define _HPUX_SOURCE
+#endif
+
 /* System libraries. */
 
 #include <stdio.h>

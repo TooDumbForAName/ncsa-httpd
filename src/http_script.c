@@ -17,7 +17,7 @@ void kill_children() {
     log_error_noclose(errstr);
 
     kill(pid,SIGTERM);
-    sleep(5); /* give them time to clean up */
+    sleep(3); /* give them time to clean up */
     kill(pid,SIGKILL);
     waitpid(pid,NULL,0);
 }
