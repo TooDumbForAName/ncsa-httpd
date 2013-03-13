@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * http_access.h,v 1.12 1996/02/22 23:46:41 blong Exp
+ * http_access.h,v 1.11 1995/11/28 09:01:50 blong Exp
  *
  ************************************************************************
  *
@@ -24,6 +24,11 @@
 
 #define FA_DENY 0
 #define FA_ALLOW 1
+
+#ifdef DIGEST_AUTH
+extern int client_accepts_digest;
+extern int assume_digest_support;
+#endif /* DIGEST_AUTH */
 
 /* http_access function prototypes */
 void evaluate_access(per_request *reqInfo, struct stat *finfo,int *allow, 

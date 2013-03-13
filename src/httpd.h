@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * httpd.h,v 1.97 1996/03/27 20:44:19 blong Exp
+ * httpd.h,v 1.91 1995/11/28 09:02:14 blong Exp
  *
  ************************************************************************
  *
@@ -25,28 +25,16 @@
 #define _HTTPD_H_
 
 #include <setjmp.h>
-#include "http_request.h"
 
 typedef struct _ChildInfo {
   int parentfd;
   int childfd;
   int pid;
   int busy;
-#ifdef NOT_READY
-  int status;
-  KeepAliveData keep_alive;		/* Child's keep alive info */
-  int csd;				/* Current Socket Descriptor */
-  JMP_BUF restart_child;		/* Return buffer for siglongjmp */
-  per_request *gCurrentRequest;		/* Current Request of Child */
-#endif /* NOT_READY */
 } ChildInfo;
 
-#ifndef NOT_READY
 extern KeepAliveData keep_alive;  /* global keep alive info */
-extern JMP_BUF jmpbuffer;         /* Return buffer for siglongjmp */
-extern int csd;			  /* Current Socket Descriptor */
-#endif /* NOT_READY */
-
+extern JMP_BUF jmpbuffer;	  /* Return buffer for siglongjmp */
 
 /* function prototypes */
 

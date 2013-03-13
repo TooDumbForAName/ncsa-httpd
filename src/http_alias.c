@@ -12,6 +12,21 @@
  *
  * http_alias.c: Stuff for dealing with directory aliases
  * 
+ * Based on NCSA HTTPd 1.3 by Rob McCool
+ * 
+ *  04-06-95 blong
+ * 	Added Saved_ variables to allow reset of aliases to configured 
+ *	only.  save_aliases is called from http_config, and 
+ *	reset_to_saved_alias is called in the initialization of 
+ *	transactions.
+ *
+ *  06-30-95 blong
+ *	removed saved stuff, since we now don't have to add user directories
+ *	to the aliases, and so they never change after startup
+ *
+ *  07-27-95 blong
+ *	log access to unknown users directory as suggested by
+ *	 Gioacchino La Vecchia (gio@di.unipi.it) 
  */
 
 
@@ -28,8 +43,16 @@
 #include "http_alias.h"
 #include "http_config.h"
 #include "http_log.h"
-#include "http_request.h"
 #include "util.h"
+
+/*
+static int Saved_num_alias = 0;
+static int num_aliases = 0;
+static alias aliases[MAX_ALIASES];
+static int Saved_num_redirect = 0;
+static int num_redirect = 0;
+static alias redirect[MAX_ALIASES];
+*/
 
 /* To send stat() information to cgi.c */
 int dirs_in_alias;

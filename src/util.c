@@ -10,12 +10,68 @@
  *
  ************************************************************************
  *
- * util.c,v 1.115 1996/03/27 20:44:30 blong Exp
+ * util.c,v 1.106 1995/11/28 09:02:21 blong Exp
  *
  ************************************************************************
  *
  * util.c: string utility things, and other utilities
  * 
+ * 03-23-93  Rob McCool
+ * 	Original code up to version 1.3 from Rob McCool
+ *
+ * 02-16-95  cvarela
+ *	Fixed stack hole in strsubfirst
+ *
+ * 03-06-95  blong
+ *	Added inststr from bdflush-1.5 for Linux to set the name of
+ *	the running processes
+ *
+ * 03-10-95  blong
+ *	Added buffered getline for all but POST requests as suggested by
+ *	Robert S. Thau (rst@ai.mit.edu)
+ *
+ * 03-20-95  blong & cvarela
+ *	Fixed make_env_str so that it doesn't modify the pointers
+ *
+ * 04-03-95  blong
+ *	May have fixed problems (esp. under Solaris 2.3) with playing
+ *	with library memory in get_remote_name
+ *
+ * 04-13-95  guillory
+ *	added strncpy_dir that limits the length of a directory copy
+ *	also added strncpy for same reason
+ *
+ * 04-29-95  blong
+ *      added patch by Kevin Steves (stevesk@mayfield.hp.com) for inststr
+ *      under HPUX which uses the pstat command
+ *
+ * 06-01-95  blong
+ *    added patch by Vince Skahan (vds7789@aw101.iasl.ca.boeing.com)
+ *    to fix Apollo DomainOS timezone handling
+ *
+ * 09-02-95  blong
+ *    added patch by Gioacchino La Vecchia (gio@di.unipi.it) to make
+ *    full host name in get_local_host() to keep from needing to use
+ *    the ServerName configuration directive
+ *
+ * 09-11-95  mshapiro
+ *    replaced atoi() in uname2id() and gname2id with scan_long() to
+ *    convert user_id and group_id from #n to uid_t, gid_t.
+ *    If the config file had contained #non-digit then atoi() would
+ *    have returned 0 and the server would have been run as root.
+ *
+ * 09-12-95  blong
+ *    removed get_local_host() patch, because its the wrong thing to
+ *    do.  Use the ServerName directive, thats what its there for.
+ *
+ * 11-02-95  mshapiro
+ *    recoded no2slash() to perform the following replacecments
+ *      sequences of / (//, ///, etc) with a single /
+ *      all occurenences of /./ with a single /
+ *      remove ./ at the beginning of the name
+ *      replace /. at the end of the name with a single /
+ *
+ *    added a call to no2slash() at the beginning of getparents()
  *
  */
 
@@ -55,7 +111,6 @@
 # include <sys/time.h>
 #endif
 #include "constants.h"
-#include "allocate.h"
 #include "util.h"
 #include "http_request.h"
 #include "http_config.h"
@@ -431,7 +486,7 @@ void no2slash(char *name)
 	while (s[0] == '/' && s[1] == '/')
 	{
 	    p = s;
-	    while ((p[0] = p[1]))
+	    while (p[0] = p[1])
 		p++;
 	}
 
@@ -441,7 +496,7 @@ void no2slash(char *name)
 	while (s[0] =='/' && s[1] == '.' && s[2] == '/')
 	{
 	    p = s;
-	    while ((p[0] = p[2]))
+	    while (p[0] = p[2])
 		p++;
 	}
 
@@ -449,7 +504,7 @@ void no2slash(char *name)
     if (name[0] == '.' && name[1] == '/')
     {
 	p = name;
-	while ((p[0] = p[2]))
+	while (p[0] = p[2])
 	    p++;
     }
 
@@ -547,8 +602,7 @@ void getline_timed_out(int sig)
 {
     char errstr[MAX_STRING_LEN];
 
-    sprintf(errstr,"timed out waiting for %s", 
-      gCurrentRequest->remote_name ? gCurrentRequest->remote_name : "-");
+    sprintf(errstr,"timed out waiting for %s", gCurrentRequest->remote_name);
     log_error(errstr,gCurrentRequest->hostInfo->error_log);
     if (!standalone) {
 	fclose(stdin);
@@ -563,115 +617,60 @@ void getline_timed_out(int sig)
     }
 }
 
-sock_buf *new_sock_buf(per_request *reqInfo, int sd) 
-{
-   sock_buf *tmp;
-   if (!(tmp = (sock_buf *)malloc(sizeof(sock_buf)))) {
-     die(reqInfo,SC_NO_MEMORY,"new_sock_buf");
-   }
-   tmp->status = SB_NEW;
-   tmp->sd = sd;
-
-   return tmp;
-}
-
-/* Modified by Trung Dung (tdung@OpenMarket.com) to handle RFC822 
- * line wraps
- * This routine is currently not thread safe.
- * This routine may be thread safe. (blong 3/13/96)
- */
-int getline(sock_buf *sb, char *s, int n, int options, unsigned int timeout)
+int getline(int sd, char *s, int n, int reset, unsigned int timeout)
 {
     char *endp = s + n - 1;
     int have_alarmed = 0;
-/*    static int buf_posn, buf_good; */
+    static int buf_posn, buf_good;
     int buf_start;
-/*    static char buffer[HUGE_STRING_LEN]; */
+    static char buffer[HUGE_STRING_LEN];
     int c;
     int ret;
-    int size;
 
-    buf_start = sb->buf_posn;
-    if ((options & G_RESET_BUF) || (sb->status == SB_NEW)) {
-	buf_start = sb->buf_posn = sb->buf_good = 0;
-	sb->buffer[0] = '\0';
+    buf_start = buf_posn;
+    if (reset == 1) {
+	buf_start = buf_posn = buf_good = 0;
+	buffer[0] = '\0';
     }
-    else if (options & G_FLUSH) {
-	while (sb->buf_posn < sb->buf_good) 
-	    *s++ = sb->buffer[(sb->buf_posn)++];
+    else if (reset == 2) {
+	while (buf_posn < buf_good) 
+	    *s++ = buffer[buf_posn++];
 	*s = '\0';
-	sb->status = SB_FLUSHED;
-	return sb->buf_posn - buf_start;
-    }
-    if (options & G_SINGLE_CHAR) {
-      size = 1;
-    } else {
-      size = HUGE_STRING_LEN;
+	return buf_posn - buf_start;
     }
 
     do {
-	if (sb->buf_posn == sb->buf_good) {
+	if (buf_posn == buf_good) {
 	    have_alarmed = 1;
 	    signal(SIGALRM,getline_timed_out);
 	    alarm(timeout);
-
-	    ret=read(sb->sd, sb->buffer, size);
-
-	    if (ret <= 0) {
+      
+	    if ((ret=read(sd, buffer, HUGE_STRING_LEN)) <= 0) {
 		if (ret == -1 && errno == EINTR) 
 		    continue; /* Solaris... */
 		else {
-		    sb->status = SB_ERROR;
                     if (have_alarmed) { alarm(0); signal(SIGALRM,SIG_IGN); }
 		    /* just always return -1, instead of 0 */
 		    return -1;
 		}
 	    }
-	    sb->status = SB_READ;
 
-	    sb->buf_good = ret;
-	    buf_start -= sb->buf_posn;
-	    sb->buf_posn = 0;
-
-	    		/* ADC hack below	ZZZ */
-/*
-	    if (ret >0) {
-		for (c = 0; c < ret; c++)
-		   fputc(sb->buffer[c],stderr);
-	    	c = 0;
-	    }
-*/
-
+	    buf_good = ret;
+	    buf_start -= buf_posn;
+	    buf_posn = 0;
 	}
 	
-	c = sb->buffer[(sb->buf_posn)++];
-        if ((c == '\r') && (sb->buffer[sb->buf_posn] == '\n') && 
-            (sb->buf_posn + 1 < sb->buf_good) && 
-            ((sb->buffer[sb->buf_posn + 1] == ' ') || 
-	     (sb->buffer[sb->buf_posn + 1] == '\t'))) 
-        {
-          *s++ = c;
-          *s++ = '\n';
-          *s++ = sb->buffer[sb->buf_posn + 1];
-          sb->buf_posn += 2;
-        }
-        else if ((c == '\n') && (sb->buf_posn < sb->buf_good) &&
-            ((sb->buffer[sb->buf_posn] == ' ') || 
-	     (sb->buffer[sb->buf_posn] == '\t'))) 
-	{
-          *s++ = '\n';
-          *s++ = sb->buffer[sb->buf_posn];
-          sb->buf_posn += 1;
-        }
-        else if (c == LF) break;
-        else if (c != CR) *s++ = c;
+	c = buffer[buf_posn++];
+
+	if (c == LF) break;
+	if (c != CR) *s++ = c;
     } while (s < endp);
   
     if (have_alarmed) { alarm(0); signal(SIGALRM,SIG_IGN); }
   
     *s = '\0';
-
-    return sb->buf_posn - buf_start;
+  
+    return buf_posn - buf_start;
 }
 
 void splitURL(char *line, char *url, char *args) {
@@ -761,7 +760,7 @@ void escape_shell_cmd(char *cmd) {
 
     l=strlen(cmd);
     for(x=0;cmd[x];x++) {
-        if(ind("&;`'\"|*?~<>^()[]{}$\\\x0A",cmd[x]) != -1){
+        if(ind("&;`'\"|*?~<>^()[]{}$\\",cmd[x]) != -1){
             for(y=l+1;y>x;y--)
                 cmd[y] = cmd[y-1];
             l++; /* length has been increased */
@@ -1040,14 +1039,14 @@ uid_t uname2id(char *name) {
     {
 	if (!scan_long (&name[1], &id))
 	{
-	    fprintf(stderr,"HTTPd: bad user id %s\n",name);
+	    fprintf(stderr,"httpd: bad user id %s\n",name);
 	    exit(1);
 	}
 	return (uid_t) id ;
     }
 
     if(!(ent = getpwnam(name))) {
-        fprintf(stderr,"HTTPd: bad user name %s\n",name);
+        fprintf(stderr,"httpd: bad user name %s\n",name);
         exit(1);
     }
     return(ent->pw_uid);
@@ -1061,14 +1060,14 @@ gid_t gname2id(char *name) {
     {
 	if (!scan_long (&name[1], &id))
 	{
-	    fprintf(stderr,"HTTPd: group id %s\n",name);
+	    fprintf(stderr,"httpd: bad group id %s\n",name);
 	    exit(1);
 	}
 	return (gid_t) id ;
     }
 
     if(!(ent = getgrnam(name))) {
-        fprintf(stderr,"HTTPd: bad group name %s\n",name);
+        fprintf(stderr,"httpd: bad group name %s\n",name);
         exit(1);
     }
     return(ent->gr_gid);
@@ -1103,6 +1102,8 @@ int get_remote_host_min(per_request *reqInfo) {
     struct in_addr *iaddr;
     struct hostent *hptr;
 
+    reqInfo->ownDNS = TRUE;
+
     len = sizeof(struct sockaddr);
 
     if ((getpeername(reqInfo->connection_socket, &addr, &len)) < 0) {
@@ -1112,20 +1113,14 @@ int get_remote_host_min(per_request *reqInfo) {
     iaddr = &(((struct sockaddr_in *)&addr)->sin_addr);
     hptr = gethostbyaddr((char *)iaddr, sizeof(struct in_addr), AF_INET);
     if(hptr) {
-      if (reqInfo->remote_host) {
-	freeString(reqInfo->remote_host);
-      }
-      reqInfo->remote_host = dupStringP(hptr->h_name,STR_REQ);
+      if (reqInfo->remote_host) free(reqInfo->remote_host);
+      reqInfo->remote_host = strdup(hptr->h_name);
       str_tolower(reqInfo->remote_host);
-      if (reqInfo->remote_name) {
-	freeString(reqInfo->remote_name);
-      }
-      reqInfo->remote_name = dupStringP(reqInfo->remote_host,STR_REQ);
+      if (reqInfo->remote_name) free(reqInfo->remote_name);
+      reqInfo->remote_name = strdup(reqInfo->remote_host);
     } else {
   	/* shouldn't be necessary, but just in case */
-	if (reqInfo->remote_host) {
-	  freeString(reqInfo->remote_host);
-        }
+	if (reqInfo->remote_host) free(reqInfo->remote_host);
 	reqInfo->remote_host = NULL;
     }
     reqInfo->dns_host_lookup = TRUE;
@@ -1139,13 +1134,15 @@ void get_remote_host(per_request *reqInfo)
     struct in_addr *iaddr;
     struct hostent *hptr;
 
+    reqInfo->ownDNS = TRUE;
+
     len = sizeof(struct sockaddr);
     
     if ((getpeername(reqInfo->connection_socket, &addr, &len)) < 0) {
-      reqInfo->remote_name = dupStringP("UNKNOWN_HOST",STR_REQ);
-      reqInfo->remote_ip = dupStringP("UNKNOWN_IP",STR_REQ);
-      reqInfo->remote_host = dupStringP("UNKNOWN_HOST",STR_REQ);
-      return;
+	reqInfo->remote_name = strdup("UNKNOWN_HOST");
+	reqInfo->remote_ip = strdup("UNKNOWN_IP");
+	reqInfo->remote_host = strdup("UNKNOWN_HOST");
+        return;
     }
 
     iaddr = &(((struct sockaddr_in *)&addr)->sin_addr);
@@ -1154,18 +1151,14 @@ void get_remote_host(per_request *reqInfo)
     {
       hptr = gethostbyaddr((char *)iaddr, sizeof(struct in_addr), AF_INET);
       if(hptr) {
-        reqInfo->remote_host = dupStringP(hptr->h_name,STR_REQ);
+        reqInfo->remote_host = strdup(hptr->h_name);
         str_tolower(reqInfo->remote_host);
-	if (reqInfo->remote_name) {
-	  freeString(reqInfo->remote_name);
-        }
-        reqInfo->remote_name = dupStringP(reqInfo->remote_host,STR_REQ);
+	if (reqInfo->remote_name) free(reqInfo->remote_name);
+        reqInfo->remote_name = strdup(reqInfo->remote_host);
       } else reqInfo->remote_host = NULL;
       reqInfo->dns_host_lookup = TRUE;
-    } else {
-	if (reqInfo->remote_host != NULL) freeString(reqInfo->remote_host);
+    } else 
         reqInfo->remote_host = NULL;
-    }
     
     if (reqInfo->hostInfo->dns_mode == DNS_MAX) {
     /* Grrr. Check THAT name to make sure it's really the name of the addr. */
@@ -1182,20 +1175,18 @@ void get_remote_host(per_request *reqInfo)
         }
         if((!hptr) || (!(*haddr)))
 	    if (reqInfo->remote_host) {
-		freeString(reqInfo->remote_host);
+		free(reqInfo->remote_host);
             	reqInfo->remote_host = NULL;
 	    }
       }
     }
-    reqInfo->remote_ip = dupStringP(inet_ntoa(*iaddr),STR_REQ);
+    reqInfo->remote_ip = strdup(inet_ntoa(*iaddr));
     if(!reqInfo->remote_host){
-	if (reqInfo->remote_name) {
-	  freeString(reqInfo->remote_name);
-        }
-        reqInfo->remote_name = dupStringP(reqInfo->remote_ip,STR_REQ);
+	if (reqInfo->remote_name) free(reqInfo->remote_name);
+        reqInfo->remote_name = strdup(reqInfo->remote_ip);
     }
     if (!reqInfo->remote_name){
-	reqInfo->remote_name = dupStringP("UNKNOWN_HOST",STR_REQ);
+	reqInfo->remote_name = strdup("UNKNOWN_HOST");
     }
 }
 
@@ -1237,7 +1228,7 @@ void get_local_host()
         gethostname(str, len);
         if((!(p=gethostbyname(str))) || 
 	   (!(gConfiguration->server_hostname = find_fqdn(p)))) {
-            fprintf(stderr,"HTTPd: cannot determine local host name.\n");
+            fprintf(stderr,"httpd: cannot determine local host name.\n");
             fprintf(stderr,"Use ServerName to set it manually.\n");
             exit(1);
         }
@@ -1260,16 +1251,13 @@ void get_local_addr(per_request *reqInfo) {
 	 sizeof(struct in_addr));
 }
 
-/* Modified: Tue Sep  5 23:18:01 1995
- * This function now understands the "https" directive and the 
- * default SSL port of 443.
- */
-void construct_url(char *full_url, per_host *host, char *url) 
-{
-     if (port == DEFAULT_PORT)
-       sprintf(full_url,"%s://%s%s", "http",host->server_hostname,url);
-      else 
-       sprintf(full_url,"%s://%s:%d%s", "http",host->server_hostname,port,url);
+void construct_url(char *full_url, per_host *host, char *url) {
+/* Since 80 is default port */
+  if (port == 80) {
+    sprintf(full_url,"http://%s%s",host->server_hostname,url);
+  } else {
+    sprintf(full_url,"http://%s:%d%s",host->server_hostname,port,url);
+  }
 }
 
 /* aaaack but it's fast and const should make it shared text page. */

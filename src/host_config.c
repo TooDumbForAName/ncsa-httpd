@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- *host_config.c,v 1.20 1996/04/05 18:54:47 blong Exp
+ *host_config.c,v 1.15 1995/11/06 20:57:59 blong Exp
  *
  ************************************************************************
  *
@@ -28,7 +28,6 @@
 #include "http_log.h"
 #include "http_alias.h"
 #include "http_mime.h"
-#include "http_request.h"
 #include "util.h"
 
 per_host* gConfiguration;
@@ -279,10 +278,7 @@ void which_host_conf(per_request *reqInfo) {
   while (host && !Found) {
     if (host->address_info.s_addr == reqInfo->address_info.s_addr) {
       if (!host->virtualhost && host->called_hostname) {
-	if (!strncasecmp(host->called_hostname,reqInfo->inh_called_hostname,
-			 strlen(host->called_hostname))) {
-	  Found = TRUE;
-        }
+	if (!strcasecmp(called_hostname,host->called_hostname)) Found = TRUE;
       } else Found = TRUE;	
     }	  
     if (!Found) host = host->next;

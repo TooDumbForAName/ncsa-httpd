@@ -122,8 +122,8 @@ DefaultType text/plain
 # AddEncoding allows you to have certain browsers (Mosaic/X 2.1+) uncompress
 # information on the fly. Note: Not all browsers support this.
 
-#AddEncoding compress Z
-#AddEncoding gzip gz
+#AddEncoding x-compress Z
+#AddEncoding x-gzip gz
 
 # The following are known to the server as "Magic Mime Types"  They allow
 # you to change how the server perceives a document by the extension

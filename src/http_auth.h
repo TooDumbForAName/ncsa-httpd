@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * http_auth.h,v 1.22 1996/03/27 20:43:57 blong Exp
+ * http_auth.h,v 1.20 1995/07/25 14:48:05 blong Exp
  *
  ************************************************************************
  *
@@ -25,10 +25,11 @@
 #  include <ndbm.h>
 # endif /* _DBMSUPPORT_H */
 #endif /* DBM_SUPPORT */
-#include "global.h"
 
 /* globals defined in this module */
 
+extern char user[];
+extern char groupname[];
 
 
 /* http_auth */
@@ -70,5 +71,6 @@ int k4_server_auth(char* authline, char* reply,FILE* error_log,
 extern char k5_srvtab[];
 int k5_server_auth(char* authline, char* reply, KerberosInfo *kdat);
 #endif /* KRB5 */
+
 
 #endif /* _HTTP_AUTH_H_ */

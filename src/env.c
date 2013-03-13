@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- *env.c,v 1.20 1996/04/05 18:54:44 blong Exp
+ *env.c,v 1.17 1995/11/28 09:01:42 blong Exp
  *
  ************************************************************************
  *
@@ -28,15 +28,10 @@
 #include <string.h>
 #include "constants.h"
 #include "env.h"
-#include "http_request.h"
 #include "http_log.h"
-#include "allocate.h"
 
 /* Older version, required external help.  Newer version should be self 
- *  contained for easier extensibility
- * updated to use string allocation structures for speed and so it doesn't
- *  leak
- */
+   contained for easier extensibility */
 
 /* This will change the value of an environment variable to *value
    if found.  Returns TRUE if the replace took place, FALSE otherwise */
@@ -68,9 +63,9 @@ int  replace_env_str(per_request *reqInfo, char *name, char *value)
 
 void free_env(per_request *reqInfo) {
     int x;
-   
+    
     for(x=0;reqInfo->env[x];x++)
-        freeString(reqInfo->env[x]);
+        free(reqInfo->env[x]);
     free(reqInfo->env);
     free(reqInfo->env_len);
     reqInfo->env = NULL;
@@ -87,7 +82,7 @@ int merge_header(per_request *reqInfo, char *header, char *value)
 {
     register int l,lt;
     int len, ndx;
-    char **t,*tmp;
+    char **t;
     
     len = strlen(value);
 
@@ -99,20 +94,14 @@ int merge_header(per_request *reqInfo, char *header, char *value)
         if(!strncmp(*t,header,l)) {
             lt = strlen(*t);
 	    if ((lt + len + 2) > reqInfo->env_len[ndx]) {
- 	      tmp = reqInfo->env[ndx];
-	      if ((lt+len+2) > HUGE_STRING_LEN) {
-		reqInfo->env[ndx] = newString(lt+len+2,STR_REQ);
-	      } else {
-		reqInfo->env[ndx] = newString(HUGE_STRING_LEN,STR_REQ);
-	      }
- 	      sprintf(reqInfo->env[ndx],"%s, %s",tmp,value);
-	      freeString(tmp);
-	    } else {
-              (*t)[lt++] = ',';
-              (*t)[lt++] = ' ';
-              strcpy(&((*t)[lt]),value);
-            }
-            header[l-1] = '\0';
+		int n = reqInfo->env_len[ndx] / BIG_ENV_VAR_LEN + 1;
+		if(!(*t = (char *) realloc(*t,n * BIG_ENV_VAR_LEN*sizeof(char))))
+		    die(reqInfo, SC_NO_MEMORY,"merge_header");
+		reqInfo->env_len[ndx] = n * BIG_ENV_VAR_LEN;
+	    }
+            (*t)[lt++] = ',';
+            (*t)[lt++] = ' ';
+            strcpy(&((*t)[lt]),value);
             return 1;
         }
     }
@@ -127,14 +116,7 @@ int merge_header(per_request *reqInfo, char *header, char *value)
 int make_env_str(per_request *reqInfo, char *name, char *value) 
 {
     int n;
-    char tmp[HUGE_STRING_LEN];
 
-    if (value == NULL) {
-     /* 
-      * I've generally protected against this, but sanity isn't a bad thing
-      */
-      return 0;
-    }
     if (reqInfo->env == NULL) {
 	if (!(reqInfo->env = (char **) malloc(ENV_BEG_SIZE * sizeof(char *)))
 	    || !(reqInfo->env_len = (int*) malloc(ENV_BEG_SIZE * sizeof(int))))
@@ -149,12 +131,13 @@ int make_env_str(per_request *reqInfo, char *name, char *value)
 	    die(reqInfo,SC_NO_MEMORY,"make_env_str:realloc");
 	reqInfo->max_env += ENV_INC_SIZE;
     }
-    strncpy(tmp, name, HUGE_STRING_LEN);
-    strncat(tmp,"=",HUGE_STRING_LEN - strlen(tmp));
-    strncat(tmp,value,HUGE_STRING_LEN - strlen(tmp));
-    reqInfo->env[reqInfo->num_env] = dupStringP(tmp,STR_REQ); 
-    reqInfo->env_len[reqInfo->num_env] = 
-			      sizeofString(reqInfo->env[reqInfo->num_env]);
+    if (!(reqInfo->env[reqInfo->num_env] = 
+	  (char *) malloc(n = (strlen(name) + strlen(value) + 2))))
+	die(reqInfo,SC_NO_MEMORY,"make_env_str:add");
+    strcpy(reqInfo->env[reqInfo->num_env], name);
+    strcat(reqInfo->env[reqInfo->num_env],"=");
+    strcat(reqInfo->env[reqInfo->num_env],value);
+    reqInfo->env_len[reqInfo->num_env] = n;
   
     reqInfo->num_env++;
     reqInfo->env[reqInfo->num_env] = NULL; 

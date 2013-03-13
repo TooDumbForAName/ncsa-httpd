@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * http_send.h,v 1.10 1996/03/27 20:44:12 blong Exp
+ * http_send.h,v 1.6 1995/11/28 09:02:11 blong Exp
  *
  ************************************************************************
  *
@@ -22,17 +22,14 @@
 
 /* function prototypes */
 void send_node(per_request *reqInfo);
-void send_file(per_request *reqInfo, struct stat *fi, char allow_options);
-void send_dir(per_request *reqInfo,struct stat *finfo, char allow_options);
-int extract_path_info(per_request *reqInfo, struct stat *finfo);
+void send_file(per_request *reqInfo, struct stat *fi, 
+               char *path_args, char allow_options);
+void send_dir(per_request *reqInfo,struct stat *finfo, char *pa, 
+	      char allow_options);
+int extract_path_info(per_request *reqInfo, char *path_args,
+		      struct stat *finfo);
 long send_fp(per_request *reqInfo, FILE *f, void (*onexit)(void));
 void send_fd_timed_out(int);
-void send_http_header(per_request *reqInfo);
-
-int rprintf(per_request *reqInfo, char *format, ...);
-int rputs(char *string, per_request *reqInfo);
-int rputc(int ch, per_request *reqInfo);
-int rflush(per_request *reqInfo);
 
 #endif /* _HTTP_SEND_H_ */
 

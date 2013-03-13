@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * constants.h,v 1.54 1996/04/05 18:54:42 blong Exp
+ * constants.h,v 1.42 1995/11/28 09:01:40 blong Exp
  *
  ************************************************************************
  *
@@ -46,34 +46,26 @@
 #define IOBUFSIZE 8192				
 
 
-#ifdef NEXT
-# define HTTP_TIME_FORMAT "%a, %d %b %Y %X"
-#else
-# define HTTP_TIME_FORMAT "%a, %d %b %Y %T GMT" 
-#endif /* NEXT */
+#define HTTP_TIME_FORMAT "%a, %d %b %Y %T GMT" 
 
-#define SERVER_VERSION "NCSA/1.5.1"
-#define SERVER_SOURCE "NCSA/1.5.1"
+
+#define SERVER_VERSION "NCSA/1.5"
+#define SERVER_SOURCE "NCSA/1.5.0c"
 #define SERVER_PROTOCOL "HTTP/1.0"
 
 /* Response Codes from HTTP/1.0 Spec 
    all 4 digit codes are internal only */
-#define SC_CONTINUE		100
-#define SC_SWITCHING_PROTOCOLS	101
 #define SC_DOCUMENT_FOLLOWS 	200
 #define SC_CREATED		201
 #define SC_ACCEPTED		202
-#define SC_NON_AUTH_INFO	203
+#define SC_PROV_INFO		203
 #define SC_NO_CONTENT		204
-#define SC_RESET_CONTENT	205
-#define SC_PARTIAL_CONTENT	206
 #define SC_MULTIPLE_CHOICES	300
 #define SC_REDIRECT_PERM	301
 #define SC_REDIRECT_TEMP 	302
 #define SC_REDIRECT_LOCAL       3020
-#define SC_SEE_OTHER		303
+#define SC_METHOD		303
 #define SC_USE_LOCAL_COPY 	304
-#define SC_USE_PROXY		305
 #define SC_BAD_REQUEST 		400
 #define SC_AUTH_REQUIRED 	401
 #define SC_PAY_REQUIRED		402
@@ -85,8 +77,6 @@
 #define SC_REQUEST_TIMEOUT	408
 #define SC_CONFLICT		409
 #define SC_GONE			410
-#define SC_LENGTH_REQUIRED      411
-#define SC_UNLESS_TRUE		412
 #define SC_SERVER_ERROR 	500
 #define SC_NOT_IMPLEMENTED 	501
 #define SC_BAD_GATEWAY		502
@@ -95,41 +85,22 @@
 #define SC_NO_MEMORY 	  	6992
 #define SC_CONF_ERROR 	  	6993
 #define SC_BAD_IMAGEMAP         6994
-#define SC_AUTH_NO_WWW_AUTH	7001
 
-/* Supported Methods - sorta */
-#define METHODS 		8
+/* Supported Methods - sorta*/
+#define METHODS 		7
 #define M_GET 			0 
 #define M_HEAD			1
 #define M_POST 		 	2
 #define M_PUT 			3	
 #define M_DELETE 		4
-#define M_SECURE		5
 #define M_INVALID              -1
 
 /* Unsupported Methods */ 
-#define M_LINK			6
-#define M_UNLINK		7
-#define M_OPTIONS		8
-#define M_PATCH			9
-#define M_COPY			10
-#define M_MOVE			11
-#define M_TRACE			12
-#define M_WRAPPED		13
+#define M_LINK			5
+#define M_UNLINK		6
 
 /* Array containing Method names */
 extern char *methods[];
-
-/* Supported Protocals - sorta */
-#define PROTOCALS       6
-#define P_OTHER		0
-#define P_HTTP_0_9	1
-#define P_HTTP_1_0	2
-#define P_HTTP_1_1	3
-#define P_SHTTP_1_1	4
-#define P_SHTTP_1_2	5
-
-extern char *protocals[];
 
 /* Object types */
 #define A_STD_DOCUMENT 		  0
@@ -155,8 +126,7 @@ extern char *protocals[];
 #define OR_AUTHCFG 		  8
 #define OR_INDEXES  		 16
 #define OR_REDIRECT		 32
-#define OR_PRIVACY_ENHANCE       64
-#define OR_ALL (OR_LIMIT | OR_OPTIONS | OR_FILEINFO | OR_AUTHCFG | OR_INDEXES | OR_REDIRECT | OR_PRIVACY_ENHANCE)
+#define OR_ALL (OR_LIMIT | OR_OPTIONS | OR_FILEINFO | OR_AUTHCFG | OR_INDEXES | OR_REDIRECT)
 
 /* PEM/PGP Encodings */
 
@@ -164,7 +134,6 @@ extern char *protocals[];
 #define CGI_MAGIC_TYPE 		 "application/x-httpd-cgi"
 #define INCLUDES_MAGIC_TYPE      "text/x-server-parsed-html"
 #define IMAGEMAP_MAGIC_TYPE      "text/x-imagemap"
-#define BLACKOUT_MAGIC_TYPE 	 "text/x-httpd-black"
 
 /* For directory indexing */
 #define BY_PATH 			0
@@ -202,7 +171,6 @@ typedef struct {
 #define AUTHFILETYPE_STANDARD 0
 #define AUTHFILETYPE_DBM      1
 #define AUTHFILETYPE_NIS      2
-#define AUTHFILETYPE_RADIUS   3
 
 typedef struct {			
     char d[MAX_STRING_LEN];
@@ -210,24 +178,12 @@ typedef struct {
     char override;
 
     int order[METHODS];
-    int bSatisfy;             /* 0 = All, 1 = Any */
 
     int num_allow[METHODS];
     char *allow[METHODS][MAX_SECURITY];
-
+    int bSatisfy;             /* 0 = All, 1 = Any */
     int num_auth[METHODS];
     char *auth[METHODS][MAX_SECURITY];
-
-    int num_referer_allow[METHODS];
-    char *referer_allow[METHODS][MAX_SECURITY];
-
-    int num_referer_deny[METHODS];
-    char *referer_deny[METHODS][MAX_SECURITY];
-
-    int num_deny[METHODS];
-    char *deny[METHODS][MAX_SECURITY];
-
-    char *on_deny[METHODS];
 
     char auth_type[MAX_STRING_LEN];
     char auth_name[MAX_STRING_LEN];
@@ -240,8 +196,17 @@ typedef struct {
     int  auth_digestfile_type;
 #endif /* DIGEST_AUTH */
 
+    int num_deny[METHODS];
+    char *deny[METHODS][MAX_SECURITY];
 } security_data;
 
+#define PROTOCALS       4
+#define P_OTHER		0
+#define P_HTTP_0_9	1
+#define P_HTTP_1_0	2
+#define P_HTTP_1_1	3
+
+extern char *protocals[];
 
 typedef struct _ErrorDoc {
 /*  int Type; */
@@ -255,20 +220,6 @@ typedef struct _ErrorDoc {
 #define DNS_MIN		1
 #define DNS_STD		2
 #define DNS_MAX		3
-
-/* ----------- Our socket buffering routine defines ----------------- */
-#define SB_NEW     1
-#define SB_READ    2
-#define SB_FLUSHED 3
-#define SB_ERROR   4
- 
-typedef struct _sock_buf {
-  char buffer[HUGE_STRING_LEN];
-  int buf_posn;
-  int buf_good;
-  int status;
-  int sd;
-} sock_buf;
 
 /* ------------------- per hostname configuration -------------------- */
 
@@ -328,61 +279,31 @@ typedef struct _per_host {
 } per_host;
 
 /* --------- Per request Data Structure ------------- */
- 
-/* Request Flags */
-#define DOING_PGP   1
-#define DOING_SHTTP 2
-#define DOING_SSL   3
- 
+
 typedef struct _per_request {
 /* Information about Contents; */
-  int ownENV;
+  int ownURL;
   int ownDNS;
-  int ownSB;
-  int RequestFlags;
- 
+  int ownENV;
+  
 /* Request Information */
   int status;
-  char *status_line;
+/*  char *status_line; */
   long bytes_sent;
- 
+
 /* request stuff to be logged */
+  char agent[HUGE_STRING_LEN];
+  char referer[HUGE_STRING_LEN];
+
+  int http_version;    
   int method;
   char url[HUGE_STRING_LEN];
-  char args[HUGE_STRING_LEN];
-  char path_info[HUGE_STRING_LEN];
-  int http_version;
-  char inh_agent[HUGE_STRING_LEN];
-  char inh_referer[HUGE_STRING_LEN];
-  char inh_called_hostname[MAX_STRING_LEN];
-  char inh_if_mod_since[MAX_STRING_LEN];
-  char inh_auth_line[HUGE_STRING_LEN];
-  char inh_content_type[MAX_STRING_LEN];
-  int  inh_content_length;
- 
-/* Internal Info */
   char filename[HUGE_STRING_LEN];
- 
-/* Outgoing information */
-  char outh_location[HUGE_STRING_LEN];
-  char outh_last_mod[MAX_STRING_LEN];
-  char outh_www_auth[HUGE_STRING_LEN];
-  char outh_content_type[MAX_STRING_LEN];
-  char outh_content_encoding[MAX_STRING_LEN];
-  int  outh_content_length;
-  char *outh_cgi;
- 
-#ifdef CONTENT_MD5
-  char *outh_content_md5;
-#endif /* CONTENT_MD5 */
- 
+  char args[HUGE_STRING_LEN];
+/*  char *content_type; */
   char auth_type[MAX_STRING_LEN];
   int dirs_in_alias;
- 
-  /* Authentication Information */
-  char  auth_user[MAX_STRING_LEN];
-  char  auth_group[MAX_STRING_LEN];
- 
+
   /* authentication files */
   char* auth_name;
   char* auth_pwfile;
@@ -393,36 +314,32 @@ typedef struct _per_request {
   char* auth_digestfile;
   int   auth_digestfile_type;
 #endif /* DIGEST_AUTH */
- 
+
   /* Domain Restriction Info */
   int bNotifyDomainRestricted;
   int bSatisfiedDomain;
-  int bSatisfiedReferer;
   int dns_host_lookup;
- 
+
   int num_env;
   int max_env;
   char **env;
   int *env_len;
- 
+
 /* Client Information */
   char *remote_host;
   char *remote_name;
   char *remote_ip;
 /*  char *remote_logname; */
- 
+
 /* Server Information */
   int connection_socket;
-  int in;
   FILE *out;
-  sock_buf *sb;
-  sock_buf *cgi_buf;
   per_host *hostInfo;
   struct in_addr address_info;
- 
+
 /* Linked List of requests */
   struct _per_request *next;
- 
+
 } per_request;
- 
+
 #endif /* _CONSTANTS_H_ */

@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * imagemap.h,v 1.6 1996/04/05 18:55:18 blong Exp
+ * imagemap.h,v 1.3 1995/10/06 19:15:56 blong Exp
  *
  ************************************************************************
  *
@@ -22,12 +22,10 @@
 #ifndef _IMAGEMAP_H
 #define _IMAGEMAP_H 1
 
+#define MAXLINE 500
 #define MAXVERTS 100
 #define X 0
 #define Y 1
-
-#define IMAP_NCSA 1
-#define IMAP_CERN 2
 
 void sendmesg(per_request* reqInfo, char *url, FILE* fp);
 int pointinpoly(double point[2], double pgon[MAXVERTS][2]);
@@ -36,6 +34,7 @@ int pointinrect(double point[2], double coords[MAXVERTS][2]);
 
 int isname(char);
 
-int send_imagemap(per_request* reqInfo, struct stat* fi, char allow_options);
+int send_imagemap(per_request* reqInfo, struct stat* fi, char* path_args,
+		  char allow_options);
 
 #endif /* _IMAGE_MAP_H */

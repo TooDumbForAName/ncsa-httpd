@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * fdwrap.c,v 1.15 1996/04/05 18:54:46 blong Exp
+ * fdwrap.c,v 1.11 1995/11/28 09:01:44 blong Exp
  *
  ************************************************************************
  *
@@ -18,6 +18,14 @@
  * 		of open ones and close them when errors happen.  Should 
  *		make leaks next to impossible.
  *
+ *  08-15-95  guillory
+ *	initial code
+ *	
+ *  08-16-95  blong
+ *	added headers, etc.
+ *
+ *  09-07-97 mshapiro
+ *      added includes for <malloc.h> / <sys/malloc.h>
  */
 
 #include "config.h"
@@ -52,7 +60,7 @@ static int nSize;
 void fd_error(char *err_msg)
 {
     char S[MAX_STRING_LEN];
-    sprintf(S,"fdwrap error: %s",err_msg);
+    sprintf(S,"fdwrap error: %s\n",err_msg);
     log_error(S,gConfiguration->error_log);
     exit(1);
 }
@@ -60,7 +68,7 @@ void fd_error(char *err_msg)
 void fd_warn(char *err_msg)
 {
     char S[MAX_STRING_LEN];
-    sprintf(S,"fdwrap warn: %s",err_msg);
+    sprintf(S,"fdwrap warn: %s\n",err_msg);
     log_error(S,gConfiguration->error_log);
 }
 
@@ -102,7 +110,6 @@ int GrowTable (int fd)
     FdTab[ndx].fp = NULL;
   }
   nSize = fd + 10;
-
   return 1;
 }
     

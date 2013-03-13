@@ -10,7 +10,7 @@
  *
  ************************************************************************
  *
- * http_include.h,v 1.7 1996/03/27 20:44:04 blong Exp
+ * http_include.h,v 1.5 1995/07/25 06:43:33 blong Exp
  *
  ************************************************************************
  *
@@ -32,9 +32,7 @@
 #define NUM_INCLUDE_VARS 5
 
 /* http_include */
-void send_parsed_file(per_request *reqInfo, int noexec);
+void send_parsed_file(per_request *reqInfo, char *path_args, int noexec);
 char *ht_time(time_t t, char *fmt, int gmt);
-int add_include_vars(per_request *reqInfo, char *timefmt);
-void send_parsed_content(per_request *reqInfo, FILE *f, int noexec);
 
 #endif /* _HTTP_INCLUDE_H_ */

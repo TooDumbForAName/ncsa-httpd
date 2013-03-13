@@ -1,13 +1,12 @@
 # NCSA HTTPd 1.5
 #
 # For normal machines with ANSI compilers
-#CC= cc
+# CC= cc
 # For Suns or other non-ANSI platforms. 
 CC= gcc 
-#CC = xlc
-QUANTIFY=/hdf2/pure/quantify-2.0.1-sunos4/quantify
-PURIFY=/hdf2/pure/purify-3.2-sunos4/purify
-#PURIFY=/X11/sgi5/purify3.1/purify
+QUANTIFY=/hdf2/pure/quantify-2.0-sunos4/quantify
+PURIFY=purify
+
 
 # CFLAGS, compile flags.
 #
@@ -15,10 +14,12 @@ PURIFY=/hdf2/pure/purify-3.2-sunos4/purify
 # All other defines are in config.h
 # If you want to ensure that CGI scripts can't mess with the log files,
 # use -DSECURE_LOGS
+#
 
-CFLAGS= -g
+CFLAGS= -g 
 #CFLAGS= -pg -DPROFILE
-#CFLAGS= -g -ansi -pedantic -Wall -DAIX_BROKEN_HEADERS
+#CFLAGS= -g -Wall -ansi -pedantic 
+
 
 # DIGEST AUTHENTICATION 
 #
@@ -45,8 +46,9 @@ KRB5_CFLAGS = -DKRB5 -I$(KRB5_DIR)/include -I$(KRB5_DIR)/include/krb5
 
 # Comment out the following two lines to exclude Kerberos support
 
-#KRB_CFLAGS = $(KRB4_CFLAGS) $(KRB5_CFLAGS)   # -DKRB-ENCRYPT
-#KRB_LIBS   = $(KRB4_LIBS) $(KRB5_LIBS)
+# KRB_CFLAGS = $(KRB4_CFLAGS) $(KRB5_CFLAGS)   # -DKRB-ENCRYPT
+# KRB_LIBS   = $(KRB4_LIBS) $(KRB5_LIBS)
+
 
 # DBM 
 #
@@ -79,7 +81,7 @@ LFLAGS=  # -pg -DPROFILE
 # EXTRA_LIBS= -lresolv
 # For Solaris 2.x
 # AUX_CFLAGS= -DSOLARIS2
-# EXTRA_LIBS= -lsocket -lnsl 
+# EXTRA_LIBS= -lsocket -lnsl
 # For SGI IRIX. Use the EXTRA_LIBS line if you're using NIS and want
 # user-supported directories
 # AUX_CFLAGS= -DIRIX
@@ -87,7 +89,7 @@ LFLAGS=  # -pg -DPROFILE
 # For HP-UX
 # AUX_CFLAGS= -DHPUX
 # For AIX3
-# AUX_CFLAGS= -DAIX3 -D_ALL_SOURCE # For xlc compiler
+ AUX_CFLAGS= -DAIX3
 # For AIX4
 # AUX_CFLAGS= -DAIX4
 # For Ultrix
@@ -100,7 +102,6 @@ LFLAGS=  # -pg -DPROFILE
 # AUX_CFLAGS= -DSEQUENT
 # For Linux -m486 ONLY IF YOU HAVE 486 BINARY SUPPORT IN KERNEL
 # AUX_CFLAGS= -DLINUX
-# DBM_LIBS = -lgdbm
 # For NetBSD 1.0
 # May not need -lcrypt if its included in your libc
 # AUX_CFLAGS= -DNetBSD
@@ -141,21 +142,18 @@ LFLAGS=  # -pg -DPROFILE
 # -------------- You shouldn't have to edit anything else -----------------
 # -------------------------------------------------------------------------
 
-SEC_CFLAGS = $(MD5_CFLAGS) $(KRB_CFLAGS) 
-SEC_LIBS   = $(KRB_LIBS) 
-
-ALL_CFLAGS = $(CFLAGS) $(AUX_CFLAGS) $(SEC_CFLAGS) $(DBM_CFLAGS)
-ALL_LIBS = $(EXTRA_LIBS) $(SEC_LIBS) $(DBM_LIBS) 
+SEC_CFLAGS = $(MD5_CFLAGS) $(PGP_CFLAGS) $(KRB_CFLAGS)
+SEC_LIBS   = $(KRB_LIBS)
 
 
 OBJS=httpd.o http_config.o http_request.o util.o http_dir.o \
 http_alias.o http_log.o http_mime.o http_access.o http_auth.o \
 http_send.o cgi.o http_include.o rfc931.o imagemap.o \
 http_ipc.o digest.o md5.o md5c.o env.o host_config.o fdwrap.o \
-open_logfile.o allocate.o debug.o blackout.o 
+open_logfile.o
 
 .c.o: Makefile config.h portability.h constants.h
-	$(CC) -c $(ALL_CFLAGS) $<
+	$(CC) -c $(CFLAGS) $(AUX_CFLAGS) $(SEC_CFLAGS) $(DBM_CFLAGS) $<
 
 all: httpd
 
@@ -205,22 +203,21 @@ ultrix:
 	make tar AUX_CFLAGS=-DULTRIX CC=gcc CFLAGS=-O2
 
 httpd: $(OBJS)
-	$(CC) $(LFLAGS) -o httpd $(OBJS) $(ALL_LIBS)
+	$(CC) $(LFLAGS) -o httpd $(OBJS) $(EXTRA_LIBS) $(SEC_LIBS) $(DBM_LIBS)
 
-#	-logfile=/X11/blong/httpd/logs/pure_log 
 purify: $(OBJS)
-	$(PURIFY) -program-name=/X11/blong/httpd/src/httpd \
+	$(PURIFY) -logfile=/X11/blong/httpd/logs/pure_log \
+	          -program-name=/X11/blong/httpd/src/httpd \
 	          -follow-child-processes=yes \
-	$(CC) $(LFLAGS) -o httpd $(OBJS) $(ALL_LIBS) 
+	$(CC) $(LFLAGS) -o httpd $(OBJS) $(EXTRA_LIBS) $(SEC_LIBS) $(DBM_LIBS)
 
 quantify: $(OBJS)
 	$(QUANTIFY) -record-child-process-data=yes \
-		    -record-data=no \
-	            -avoid-recording-system-calls=1,6,93,113,114 \
-	$(CC) $(LFLAGS) -o httpd $(OBJS) $(ALL_LIBS) 
+	            -avoid-recording-system-calls=93,113,114 \
+	$(CC) $(LFLAGS) -o httpd $(OBJS) $(EXTRA_LIBS) $(SEC_LIBS) $(DBM_LIBS)
 
 tar: $(OBJS)
-	$(CC) $(LFLAGS) -o ../httpd $(OBJS) $(ALL_LIBS) 
+	$(CC) $(LFLAGS) -o ../httpd $(OBJS) $(EXTRA_LIBS) $(SEC_LIBS) $(DBM_LIBS)
 
 
 http_access.o:  Makefile config.h portability.h constants.h http_access.h \
@@ -251,9 +248,10 @@ http_log.o:     config.h portability.h constants.h http_log.h \
 http_mime.o:    Makefile config.h portability.h constants.h http_mime.h \
 		http_log.h util.h http_config.h http_access.h env.h
 http_request.o: Makefile config.h portability.h constants.h http_request.h \
-		allocate.h cgi.h env.h http_access.h http_alias.h \
-		host_config.h http_config.h http_log.h http_send.h util.h
-imagemap.o:     Makefile constants.h imagemap.h allocate.h
+		util.h http_mime.h http_config.h http_log.h http_auth.h \
+		httpd.h http_send.h cgi.h http_access.h host_config.h \
+		http_alias.h env.h
+imagemap.o:     Makefile constants.h imagemap.h 
 cgi.o:		Makefile config.h portability.h constants.h cgi.h \
 		http_log.h http_request.h util.h http_mime.h http_access.h \
 		http_auth.h http_alias.h http_config.h
@@ -267,8 +265,6 @@ env.o:		config.h portability.h constants.h http_log.h env.h
 rfc931.o:	config.h portability.h 
 open_logfile.o: config.h portability.h constants.h open_logfile.h \
 		http_config.h util.h
-allocate.o:	config.h portability.h constants.h host_config.h http_log.h \
-		allocate.h
 
 # file descriptor scoreboarding
 fdwrap.o:	config.h portability.h constants.h fdwrap.h
@@ -286,5 +282,5 @@ SRC = $(OBJS:%.o=%.c)
 codecenter:
 	#setopt ansi
 	#setopt print_string 128
-	#setopt load_flags $(ALL_FLAGS) 
-	#load $(LFLAGS) $(SRC) $(ALL_LIBS) 
+	#setopt load_flags $(CFLAGS) $(AUX_CFLAGS) $(SEC_CFLAGS) $(DBM_CFLAGS)
+	#load $(LFLAGS) $(SRC) $(EXTRA_LIBS) $(SEC_LIBS) $(DBM_LIBS)

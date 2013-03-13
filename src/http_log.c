@@ -10,12 +10,45 @@
  *
  ************************************************************************
  *
- * http_log.c,v 1.84 1996/04/05 18:54:59 blong Exp
+ * http_log.c,v 1.76 1995/11/28 09:02:04 blong Exp
  *
  ************************************************************************
  *
  * http_log.c: Dealing with the logs and errors
  * 
+ * Based on NCSA HTTPd 1.3 by Rob McCool
+ * 
+ * 10/28/94 cvarela
+ *    Added agent_log and referer_log files.
+ *
+ * 02/15/95 blong
+ *    Added support for configuration defined error messages
+ * 
+ * 03/19/95 blong
+ *    Some modification to status lines for uniformity, and for user
+ *    defined error messages to give the correct status.
+ *
+ * 04/11/95 blong
+ *    Changed custom error responses to only send the error string as
+ *    arguments to the script
+ *
+ * 05/08/95 blong
+ *    Bowing to pressure, added patch by Paul Phillips (paulp@cerf.net)
+ *    to set CLOSE_ON_EXEC flag for log files under #define SECURE_LOGS
+ *
+ * 06/01/95 blong
+ *    Changed die() so that it only logs the transaction on non-ErrorDocument
+ *    errors (errors that are handled internally to the server)
+ *
+ * 09/13/95 mshapiro
+ *    Added log directory checking - group/public write permissions
+ *
+ * 09-28-95 blong
+ *    Added fix by Vince Tkac (tkac@oclc.org) to check if there are any
+ *    errordocuments defined for the virtual host in the new schema.
+ *
+ * 09-29-95 blong
+ *    Changed error_document fix to one suggested by Tim Adam (tma@osa.com.au)
  */
 
 
@@ -37,10 +70,8 @@
 #include <sys/stat.h>
 #include <string.h>
 #include "constants.h"
-#include "allocate.h"
 #include "http_log.h"
 #include "http_request.h"
-#include "http_send.h"
 #include "http_config.h"
 #include "host_config.h"
 #include "http_auth.h"
@@ -52,7 +83,6 @@
 
 const char StatLine200[] = "200 Document follows";
 const char StatLine204[] = "204 No Content";
-const char StatLine206[] = "206 Partial Content";
 const char StatLine301[] = "301 Moved Permanently";
 const char StatLine302[] = "302 Moved Temporarily";
 const char StatLine304[] = "304 Not modified";
@@ -63,7 +93,6 @@ const char StatLine404[] = "404 Not Found";
 const char StatLine408[] = "408 Request Timeout";
 const char StatLine500[] = "500 Server Error";
 const char StatLine501[] = "501 Not Implemented";
-const char StatLine503[] = "503 Service Unavailable";
 char error_msg[MAX_STRING_LEN];
 
 /* Moved to http_request.c */
@@ -79,7 +108,7 @@ void open_logs(per_host *host) {
 
     if (host->httpd_conf & HC_ERROR_FNAME) {
       if(!(host->error_log = fopen_logfile(host->error_fname,"a"))) {
-        fprintf(stderr,"HTTPd: could not open error log file %s.\n",
+        fprintf(stderr,"httpd: could not open error log file %s.\n",
                 host->error_fname);
         perror("fopen");
         exit(1);
@@ -87,7 +116,7 @@ void open_logs(per_host *host) {
     }
     if (host->httpd_conf & HC_XFER_FNAME) {
       if((host->xfer_log = open_logfile(host->xfer_fname,xfer_flags, xfer_mode)) < 0) {
-        fprintf(stderr,"HTTPd: could not open transfer log file %s.\n",
+        fprintf(stderr,"httpd: could not open transfer log file %s.\n",
                 host->xfer_fname);
         perror("open");
         exit(1);
@@ -101,7 +130,7 @@ void open_logs(per_host *host) {
     if (!(host->log_opts & LOG_COMBINED)) {
       if (host->httpd_conf & HC_AGENT_FNAME) {
 	if(!(host->agent_log = fopen_logfile(host->agent_fname,"a"))) {
-	  fprintf(stderr,"HTTPd: could not open agent log file %s.\n",
+	  fprintf(stderr,"httpd: could not open agent log file %s.\n",
 		  host->agent_fname);
 	  perror("fopen");
 	  exit(1);
@@ -114,7 +143,7 @@ void open_logs(per_host *host) {
       }
       if (host->httpd_conf & HC_REFERER_FNAME) {
 	if(!(host->referer_log = fopen_logfile(host->referer_fname,"a"))) {
-	  fprintf(stderr,"HTTPd: could not open referer log file %s.\n",
+	  fprintf(stderr,"httpd: could not open referer log file %s.\n",
 		  host->referer_fname);
 	  perror("fopen");
 	  exit(1);
@@ -158,29 +187,19 @@ void log_pid(void)
     FILE *pid_file;
 
     if(!(pid_file = fopen(pid_fname,"w"))) {
-        fprintf(stderr,"HTTPd: could not log pid to file %s\n",pid_fname);
+        fprintf(stderr,"httpd: could not log pid to file %s\n",pid_fname);
         exit(1);
     }
     fprintf(pid_file,"%d\n",getpid());
     fclose(pid_file);
 }
 
-extern int num_children;
-
 void log_transaction(per_request *reqInfo) 
 {
-    char *str;
+    char str[HUGE_STRING_LEN];
     long timz;
     struct tm *t;
-    char *tstr,sign;
-#ifdef LOG_DURATION
-    extern time_t request_time;
-    time_t duration = request_time ? (time(NULL) - request_time) : 0;
-#endif /* LOG_DURATION */
-
-    str = newString(HUGE_STRING_LEN,STR_TMP);
-    tstr = newString(MAX_STRING_LEN,STR_TMP);
-
+    char tstr[MAX_STRING_LEN],sign;
 
     t = get_gmtoff(&timz);
     sign = (timz < 0 ? '-' : '+');
@@ -189,9 +208,9 @@ void log_transaction(per_request *reqInfo)
 
     strftime(tstr,MAX_STRING_LEN,"%d/%b/%Y:%H:%M:%S",t);
     sprintf(str,"%s %s %s [%s %c%02ld%02d] \"%s\" ",
-            (reqInfo->remote_name ? reqInfo->remote_name : "-"),
+            reqInfo->remote_name,
             (do_rfc931 ? remote_logname : "-"),
-            (reqInfo->auth_user[0] ? reqInfo->auth_user : "-"),
+            (user[0] ? user : "-"),
             tstr,
             sign,
             timz/3600,
@@ -212,17 +231,16 @@ void log_transaction(per_request *reqInfo)
        else
 	strcat(str," -");
     }
-    if (reqInfo->hostInfo->referer_ignore && reqInfo->inh_referer[0]) {
-       char *str1;
+    if (reqInfo->hostInfo->referer_ignore && reqInfo->referer[0]) {
+       char str[MAX_STRING_LEN];
        int bIgnore = 0;
-       
-       str1 = newString(MAX_STRING_LEN,STR_TMP);
-       lim_strcpy(str1, reqInfo->hostInfo->referer_ignore, 255);
+
+       lim_strcpy(str, reqInfo->hostInfo->referer_ignore, 255);
        if (reqInfo->hostInfo->referer_ignore[0]) {
-         char* tok = strtok (str1, " ");
+         char* tok = strtok (str, " ");
 
          while (tok) {
-           if (strstr(reqInfo->inh_referer, tok)) {
+           if (strstr(reqInfo->referer, tok)) {
              bIgnore = 1;
              break;
            }
@@ -230,50 +248,43 @@ void log_transaction(per_request *reqInfo)
          }
        }
        if (bIgnore) {
-	 reqInfo->inh_referer[0] = '\0';
+	 reqInfo->referer[0] = '\0';
        }
-       freeString(str1);
     }
-#ifdef LOG_DURATION
-    sprintf(str+strlen(str), " %ld", duration);
-#endif /* LOG_DURATION */
-
     if (!(reqInfo->hostInfo->log_opts & LOG_COMBINED)) {
       strcat(str,"\n");
       write(reqInfo->hostInfo->xfer_log,str,strlen(str));
 
       /* log the user agent */
-      if (reqInfo->inh_agent[0]) {
+      if (reqInfo->agent[0]) {
         if (reqInfo->hostInfo->log_opts & LOG_DATE)
 	 fprintf(reqInfo->hostInfo->agent_log, "[%s] %s\n",tstr, 
-		 reqInfo->inh_agent);
+		 reqInfo->agent);
 	else
-	 fprintf(reqInfo->hostInfo->agent_log, "%s\n", reqInfo->inh_agent);
+	 fprintf(reqInfo->hostInfo->agent_log, "%s\n", reqInfo->agent);
 	fflush(reqInfo->hostInfo->agent_log);
       }
       /* log the referer */
-      if (reqInfo->inh_referer[0]) {
+      if (reqInfo->referer[0]) {
 	if (reqInfo->hostInfo->log_opts & LOG_DATE)
 	  fprintf(reqInfo->hostInfo->referer_log, "[%s] %s -> %s\n",tstr,
-	  	  reqInfo->inh_referer, reqInfo->url);
+	  	  reqInfo->referer, reqInfo->url);
 	 else 
 	  fprintf(reqInfo->hostInfo->referer_log, "%s -> %s\n",
-		  reqInfo->inh_referer, reqInfo->url);
+		  reqInfo->referer, reqInfo->url);
 	fflush(reqInfo->hostInfo->referer_log);
       }
     } else {
-      if (reqInfo->inh_referer[0])
-        sprintf(str,"%s \"%s\"",str,reqInfo->inh_referer);
+      if (reqInfo->referer[0])
+        sprintf(str,"%s \"%s\"",str,reqInfo->referer);
        else
 	strcat(str," \"\"");
-      if (reqInfo->inh_agent[0]) 
-	sprintf(str,"%s \"%s\"\n",str,reqInfo->inh_agent);
+      if (reqInfo->agent[0]) 
+	sprintf(str,"%s \"%s\"\n",str,reqInfo->agent);
        else
 	strcat(str," \"\"\n");
       write(reqInfo->hostInfo->xfer_log,str,strlen(str));
     }
-    freeString(str);
-    freeString(tstr);
 }
 
 void log_error(char *err, FILE *fp) {
@@ -285,46 +296,46 @@ void log_reason(per_request *reqInfo, char *reason, char *file)
 {
     char *buffer;
 
-    /* This might not be big enough, but since its in the heap, the
-     * worst that will happen is a core dump, and its faster than a
-     * malloc, and won't fragment the memory as badly.
-     */
-    buffer = newString(HUGE_STRING_LEN,STR_TMP);
-
-    sprintf(buffer,"HTTPd: access to %s failed for %s, reason: %s from %s",
+    buffer = (char *)malloc(strlen(reason)+strlen(reqInfo->referer)+
+			    strlen(reqInfo->remote_name)+strlen(file)+50); 
+    sprintf(buffer,"httpd: access to %s failed for %s, reason: %s from %s",
             file,reqInfo->remote_name,reason,
-	    ( (reqInfo->inh_referer[0] != '\0') ? reqInfo->inh_referer : "-"));
+	    ( (reqInfo->referer[0] != '\0') ? reqInfo->referer : "-"));
     log_error(buffer,reqInfo->hostInfo->error_log);
-    freeString(buffer);
+    free(buffer);
 }
 
+void begin_http_header(per_request *reqInfo, const char *msg) 
+{
+    fprintf(reqInfo->out,"%s %s%c",SERVER_PROTOCOL,msg,LF);
+    dump_default_header(reqInfo);
+}
 
 void error_head(per_request *reqInfo, const char *err) 
 {
-    if(reqInfo->http_version != P_HTTP_0_9) {
-      strcpy(reqInfo->outh_content_type,"text/html");
-      send_http_header(reqInfo);
-    } 
+    if(!no_headers) {
+        begin_http_header(reqInfo,err);
+        fprintf(reqInfo->out,"Content-type: text/html%c%c",LF,LF);
+    }
     if(reqInfo->method != M_HEAD) {
-        rprintf(reqInfo,"<HEAD><TITLE>%s</TITLE></HEAD>%c",err,LF);
-        rprintf(reqInfo,"<BODY><H1>%s</H1>%c",err,LF);
+        fprintf(reqInfo->out,"<HEAD><TITLE>%s</TITLE></HEAD>%c",err,LF);
+        fprintf(reqInfo->out,"<BODY><H1>%s</H1>%c",err,LF);
     }
 }
 
 void title_html(per_request *reqInfo, char *msg) 
 {
-    rprintf(reqInfo,"<HEAD><TITLE>%s</TITLE></HEAD>%c",msg,LF);
-    rprintf(reqInfo,"<BODY><H1>%s</H1>%c",msg,LF);
+    fprintf(reqInfo->out,"<HEAD><TITLE>%s</TITLE></HEAD>%c",msg,LF);
+    fprintf(reqInfo->out,"<BODY><H1>%s</H1>%c",msg,LF);
 }
 
 int die(per_request *reqInfo, int type, char *err_string) 
 {
-    char *arguments;
+    char arguments[MAX_STRING_LEN];
     int RetVal=0;
     int x;
     int die_type;
 
-    arguments = newString(MAX_STRING_LEN,STR_TMP);
     /* kill keepalive on errors until we figure out what to do
        such as compute content_length of error messages */
     die_type = DIE_NORMAL;
@@ -335,57 +346,62 @@ int die(per_request *reqInfo, int type, char *err_string)
     strcpy(failed_request,the_request);
     strcpy(failed_url,reqInfo->url);
 
+    /* For 1.4b4, changed to have a common message for ErrorDocument calls
+       We now send only error=err_string (as passed) and the CGI environment
+       variable ERROR_STATUS,ERROR_REQUEST,ERROR_URL contain the rest of the
+       relevent information */
+    /* For 1.4 release, changed ERROR_ to REDIRECT_ */
+
     switch(type) {
       case SC_NO_CONTENT:
 	reqInfo->status = SC_NO_CONTENT;
-	set_stat_line(reqInfo);
-	if (reqInfo->http_version != P_HTTP_0_9) {
-	  send_http_header(reqInfo);
-	}
+        begin_http_header(reqInfo,StatLine204);
+        fputc(LF,reqInfo->out);
         keep_alive.bKeepAlive = 0;
+        header_only = 1;
         RetVal = SC_NO_CONTENT;
         log_transaction(reqInfo);
         break;
       case SC_REDIRECT_TEMP:
         reqInfo->status = SC_REDIRECT_TEMP;
-	set_stat_line(reqInfo);
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
 	    GoErrorDoc(reqInfo,x,err_string);
 	} else {
 	    keep_alive.bKeepAlive = 0;
-	    if(reqInfo->http_version != P_HTTP_0_9) {
-	      strcpy(reqInfo->outh_location,err_string);
-	      strcpy(reqInfo->outh_content_type,"text/html");
-	      send_http_header(reqInfo);
+	    if(!no_headers) {
+		begin_http_header(reqInfo,StatLine302);
+		fprintf(reqInfo->out,"Location: %s%c",err_string,LF);
+		fprintf(reqInfo->out,"Content-type: text/html%c",LF);
+		fputc(LF,reqInfo->out);
 	    }
 	    if (reqInfo->method != M_HEAD) {
 	      title_html(reqInfo,"Document moved");
-	      rprintf(reqInfo,
+	      fprintf(reqInfo->out,
 		      "This document has moved <A HREF=\"%s\">here</A>.<P>%c",
 		    err_string,LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
 	    }
 	    log_transaction(reqInfo);
 	}
         break;
       case SC_REDIRECT_PERM:
         reqInfo->status = SC_REDIRECT_PERM;
-	set_stat_line(reqInfo);
         if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
             ErrorStat = reqInfo->status;
             GoErrorDoc(reqInfo,x,err_string);
         } else {
             keep_alive.bKeepAlive = 0;
-	    if(reqInfo->http_version != P_HTTP_0_9) {
-	      strcpy(reqInfo->outh_location,err_string);
-	      strcpy(reqInfo->outh_content_type,"text/html");
-	      send_http_header(reqInfo);
-	    }
+            if(!no_headers) {
+                begin_http_header(reqInfo,StatLine301);
+                fprintf(reqInfo->out,"Location: %s%c",err_string,LF);
+                fprintf(reqInfo->out,"Content-type: text/html%c",LF);
+                fputc(LF,reqInfo->out);
+            }
             if (reqInfo->method != M_HEAD) {
               title_html(reqInfo,"Document moved");
-              rprintf(reqInfo,"This document has permanently moved ");
-              rprintf(reqInfo,"<A HREF=\"%s\">here</A>.<P>%c</BODY>%c",
+              fprintf(reqInfo->out,"This document has permanently moved ");
+              fprintf(reqInfo->out,"<A HREF=\"%s\">here</A>.<P>%c</BODY>%c",
 		      err_string,LF,LF);
             }
             log_transaction(reqInfo);
@@ -393,95 +409,73 @@ int die(per_request *reqInfo, int type, char *err_string)
         break;
       case SC_USE_LOCAL_COPY:
         reqInfo->status = SC_USE_LOCAL_COPY;
-	set_stat_line(reqInfo);
-	if (reqInfo->http_version != P_HTTP_0_9) {
-	  send_http_header(reqInfo);
-	}
+        begin_http_header(reqInfo,StatLine304);
+        fputc(LF,reqInfo->out);
 	keep_alive.bKeepAlive = 0;
+        header_only = 1;
 	RetVal = SC_USE_LOCAL_COPY;
 	log_transaction(reqInfo);
         break;
       case SC_AUTH_REQUIRED:
         reqInfo->status = SC_AUTH_REQUIRED;
-	set_stat_line(reqInfo);
-	strcpy(reqInfo->outh_www_auth, err_string);
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
 	    GoErrorDoc(reqInfo,x,err_string);
 	} else {
 	    keep_alive.bKeepAlive = 0;
-	    if(reqInfo->http_version != P_HTTP_0_9) {
-	      strcpy(reqInfo->outh_content_type,"text/html");
-	      send_http_header(reqInfo);
+	    if(!no_headers) {
+		begin_http_header(reqInfo,StatLine401);
+		fprintf(reqInfo->out,"Content-type: text/html%c",LF);
+		fprintf(reqInfo->out,"WWW-Authenticate: %s%c%c",
+			err_string,LF,LF);
 	    }
 	    if (reqInfo->method != M_HEAD) {
 	      title_html(reqInfo,"Authorization Required");
-	      rprintf(reqInfo,"Browser not authentication-capable or %c",LF);
-	      rprintf(reqInfo,"authentication failed.%c",LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+	      fprintf(reqInfo->out,
+		      "Browser not authentication-capable or %c",LF);
+	      fprintf(reqInfo->out,"authentication failed.%c",LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
  	    }
 	    log_transaction(reqInfo);
 	}
         break;
-      case SC_AUTH_NO_WWW_AUTH:
-	reqInfo->status = SC_AUTH_REQUIRED;
-	set_stat_line(reqInfo);
-	keep_alive.bKeepAlive = 0;
-        if(reqInfo->http_version != P_HTTP_0_9) {
-          strcpy(reqInfo->outh_content_type,"text/html");
-          send_http_header(reqInfo);
-        }
-        if (reqInfo->method != M_HEAD) {
-          title_html(reqInfo,"Authorization Required");
-          rprintf(reqInfo,"You are not permitted to get this URL: %c",LF);
-          rprintf(reqInfo,"%s%c",err_string,LF);
-          rprintf(reqInfo,"</BODY>%c",LF);
-        }
-        log_transaction(reqInfo);
-        break;
       case SC_BAD_REQUEST:
         reqInfo->status = SC_BAD_REQUEST;
-	set_stat_line(reqInfo);
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
 	    GoErrorDoc(reqInfo,x,err_string);
 	} else {
 	    error_head(reqInfo,StatLine400);
 	    keep_alive.bKeepAlive = 0;
-	    if (reqInfo->method != M_HEAD) {
-	      rprintf(reqInfo, 
+	    if (!header_only) {
+	      fprintf(reqInfo->out,
 		      "Your client sent a query that this server could%c",LF);
-	      rprintf(reqInfo,"not understand.<P>%c",LF);
-	      rprintf(reqInfo,"Reason: %s<P>%c",err_string,LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+	      fprintf(reqInfo->out,"not understand.<P>%c",LF);
+	      fprintf(reqInfo->out,"Reason: %s<P>%c",err_string,LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
 	    } 
 	    log_transaction(reqInfo);
 	}
 	break;
       case SC_BAD_IMAGEMAP:
         reqInfo->status = SC_BAD_REQUEST;
-	set_stat_line(reqInfo);
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
 	    GoErrorDoc(reqInfo,x,err_string);
 	} else {
 	    error_head(reqInfo,StatLine400);
 	    keep_alive.bKeepAlive = 0;
-	    if (reqInfo->method != M_HEAD) {
-	      rprintf(reqInfo,
+	    if (!header_only) {
+	      fprintf(reqInfo->out,
 		      "Server encountered error processing imagemap%c",LF);
-	      rprintf(reqInfo,"<P>Reason: %s<P>%c",err_string,LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+	      fprintf(reqInfo->out,"Reason: %s<P>%c",err_string,LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
 	    } 
 	    log_transaction(reqInfo);
 	}
 	break;
       case SC_FORBIDDEN:
-	if (reqInfo->outh_location[0])
-	  reqInfo->status = SC_REDIRECT_TEMP;
-	 else 
-	  reqInfo->status = SC_FORBIDDEN;
-	set_stat_line(reqInfo);
+        reqInfo->status = SC_FORBIDDEN;
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
 	    GoErrorDoc(reqInfo,x,err_string);
@@ -489,18 +483,17 @@ int die(per_request *reqInfo, int type, char *err_string)
 	    error_head(reqInfo,StatLine403);
 	    keep_alive.bKeepAlive = 0;
 	    if (reqInfo->method != M_HEAD) {
-	      rprintf(reqInfo,
+	      fprintf(reqInfo->out,
 		      "Your client does not have permission to get URL %s ",
 		    err_string);
-	      rprintf(reqInfo,"from this server.<P>%c",LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+	      fprintf(reqInfo->out,"from this server.<P>%c",LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
 	    }	
 	    log_transaction(reqInfo);
 	}
 	break;
       case SC_NOT_FOUND:
         reqInfo->status = SC_NOT_FOUND;
-	set_stat_line(reqInfo);
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
 	    GoErrorDoc(reqInfo,x,err_string);
@@ -508,36 +501,16 @@ int die(per_request *reqInfo, int type, char *err_string)
 	    error_head(reqInfo,StatLine404);
 	    keep_alive.bKeepAlive = 0;
 	    if (reqInfo->method != M_HEAD) {
-	      rprintf(reqInfo,
+	      fprintf(reqInfo->out,
 		      "The requested URL %s was not found on this server.%c",
 		      err_string,LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
 	    } 
 	    log_transaction(reqInfo);
 	}
         break;
-      case SC_SERVICE_UNAVAIL:
-        reqInfo->status = SC_SERVICE_UNAVAIL;
-        set_stat_line(reqInfo);
-        if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
-            ErrorStat = reqInfo->status;
-            GoErrorDoc(reqInfo,x,err_string);
-        } else {
-            error_head(reqInfo,StatLine503);
-            keep_alive.bKeepAlive = 0;
-            if (reqInfo->method != M_HEAD) {
-              rprintf(reqInfo,
-                      "The requested URL %s is temporarily unavailable",
-                      err_string);
-              rprintf(reqInfo,"from this server.%c",LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
-            }
-            log_transaction(reqInfo);
-        }
-        break;
       case SC_SERVER_ERROR:
         reqInfo->status = SC_SERVER_ERROR;
-	set_stat_line(reqInfo);
         die_type = DIE_NORMAL;
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
@@ -548,23 +521,22 @@ int die(per_request *reqInfo, int type, char *err_string)
 	    keep_alive.bKeepAlive = 0;
 	    log_error(err_string,reqInfo->hostInfo->error_log);
 	    if (reqInfo->method != M_HEAD) {
-	      rprintf(reqInfo,"The server encountered an internal error or%c",LF);
-	      rprintf(reqInfo,"misconfiguration and was unable to complete %c",LF);
-	      rprintf(reqInfo,"your request.<P>%c",LF);
-	      rprintf(reqInfo,"Please contact the server administrator,%c",LF);
-	      rprintf(reqInfo," %s ",reqInfo->hostInfo->server_admin);
-	      rprintf(reqInfo,"and inform them of the time the error occurred%c",LF);
-	      rprintf(reqInfo,", and anything you might have done that may%c",LF);
-	      rprintf(reqInfo,"have caused the error.<P>%c",LF);
-	      rprintf(reqInfo,"<b>Error:</b> %s%c",err_string,LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+	      fprintf(reqInfo->out,"The server encountered an internal error or%c",LF);
+	      fprintf(reqInfo->out,"misconfiguration and was unable to complete %c",LF);
+	      fprintf(reqInfo->out,"your request.<P>%c",LF);
+	      fprintf(reqInfo->out,"Please contact the server administrator,%c",LF);
+	      fprintf(reqInfo->out," %s ",reqInfo->hostInfo->server_admin);
+	      fprintf(reqInfo->out,"and inform them of the time the error occurred%c",LF);
+	      fprintf(reqInfo->out,", and anything you might have done that may%c",LF);
+	      fprintf(reqInfo->out,"have caused the error.<P>%c",LF);
+	      fprintf(reqInfo->out,"<b>Error:</b> %s%c",err_string,LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
 	    } 
 	    log_transaction(reqInfo);
 	}
         break;
       case SC_NOT_IMPLEMENTED:
         reqInfo->status = SC_NOT_IMPLEMENTED;
-	set_stat_line(reqInfo);
 	if (((x=have_doc_error(reqInfo,type)) >= 0) && (!ErrorStat)) {
 	    ErrorStat = reqInfo->status;
 	    GoErrorDoc(reqInfo,x,err_string);
@@ -572,10 +544,10 @@ int die(per_request *reqInfo, int type, char *err_string)
 	    error_head(reqInfo,StatLine501);
 	    keep_alive.bKeepAlive = 0;
 	    if (reqInfo->method != M_HEAD) {
-	      rprintf(reqInfo,"We are sorry to be unable to perform the method %s",
+	      fprintf(reqInfo->out,"We are sorry to be unable to perform the method %s",
 		    err_string);
-	      rprintf(reqInfo," at this time or to this document.<P>%c",LF);
-              rprintf(reqInfo,"</BODY>%c",LF);
+	      fprintf(reqInfo->out," at this time or to this document.<P>%c",LF);
+              fprintf(reqInfo->out,"</BODY>%c",LF);
 	    }
 	    log_transaction(reqInfo);
 	}
@@ -583,33 +555,30 @@ int die(per_request *reqInfo, int type, char *err_string)
       case SC_NO_MEMORY:
         log_error("HTTPd: memory exhausted",reqInfo->hostInfo->error_log);
         reqInfo->status = SC_SERVER_ERROR;
-	set_stat_line(reqInfo);
         die_type = DIE_NORMAL;
 	error_head(reqInfo,StatLine500);
 	keep_alive.bKeepAlive = 0;
 	if (reqInfo->method != M_HEAD) {
-	    rprintf(reqInfo,"The server has temporarily run out of resources%c",LF);
-	    rprintf(reqInfo,"for your request. Please try again at a later time.<P>%c",LF);
-	    rprintf(reqInfo,"</BODY>%c",LF);
+	    fprintf(reqInfo->out,"The server has temporarily run out of resources%c",LF);
+	    fprintf(reqInfo->out,"for your request. Please try again at a later time.<P>%c",LF);
+	    fprintf(reqInfo->out,"</BODY>%c",LF);
 	}
 	log_transaction(reqInfo);
       	break;
       case SC_CONF_ERROR:
 	  reqInfo->status = SC_SERVER_ERROR;
-	  set_stat_line(reqInfo);
-	  sprintf(arguments,"HTTPd: configuration error = %s",err_string);
+	  sprintf(arguments,"httpd: configuration error = %s",err_string);
 	  log_error(arguments,reqInfo->hostInfo->error_log);
 	  error_head(reqInfo,StatLine500);
 	  keep_alive.bKeepAlive = 0;
 	  if (reqInfo->method != M_HEAD) {
-	      rprintf(reqInfo,"The server has encountered a misconfiguration.%c",LF);
-	      rprintf(reqInfo,"The error was %s.%c",err_string,LF);
-	      rprintf(reqInfo,"</BODY>%c",LF);
+	      fprintf(reqInfo->out,"The server has encountered a misconfiguration.%c",LF);
+	      fprintf(reqInfo->out,"The error was %s.%c",err_string,LF);
+	      fprintf(reqInfo->out,"</BODY>%c",LF);
 	  }
 	  log_transaction(reqInfo);
     }
-    rflush(reqInfo);
-    freeString(arguments);
+    fflush(reqInfo->out);
     if (!RetVal) 
       htexit(reqInfo,1,die_type);
     return RetVal;
@@ -618,7 +587,7 @@ int die(per_request *reqInfo, int type, char *err_string)
 int GoErrorDoc(per_request *reqInfo, int x, char *ErrString) {
     per_request *newInfo;
 
-    newInfo = continue_request(reqInfo, FORCE_GET | KEEP_ENV | KEEP_AUTH);
+    newInfo = continue_request(reqInfo,NEW_URL | FORCE_GET | KEEP_ENV | KEEP_AUTH);
     strcpy(newInfo->url,reqInfo->hostInfo->doc_errors[x]->DocErrorFile);
     if (ErrString) 
 	sprintf(newInfo->args,"error=%s",ErrString);

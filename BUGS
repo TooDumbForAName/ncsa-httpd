@@ -1,47 +1,5 @@
-NOTE: Bugs are mentioned in the version they are found in.  This doesn't 
-mean that they didn't exist prior to that version.
-
-Known Bugs in 1.5.1b3
----------------------
-*) 299: File descriptors aren't set correctly on child_alone()
-*) 301: Sending headers on HTTP/0.9 response
-
-Known Bugs in 1.5.1b2
----------------------
-*) 900: ErrorDocument 401s as html files doesn't work on Mosaic/X, does on
-	netscape
-*) 293: Socket isn't closed before CGI execution, causing client to hang
-	waiting for close
-
-Known Bugs in 1.5.1b1
----------------------
-*) 264: imagemap fails because of invalid fgets() argument
-*) 265: in_ip() broken causing all access control by ip to fail
-*) 266: 301 and 204 status codes broken in set_stat_line()
-*) 267: no bounds checking in access_control array
-
-
 Known Bugs in 1.5a
 ---------------------
-*) server doesn't clean up directory indexing information added by .htaccess
-*) fgets in src/imagemap.c only uses MAX_STRING_LEN, which may be too short 
-   for complex polygons
-*) If you don't have an allow or require line in .htaccess LIMIT, it won't
-   work (ie, just a deny)
-*) Doesn't log HEAD request to automatically indexed directory
-*) Can't use group and user name which are the same in flat group file 
-*) Off by one errors in DBM support
-*) typo in LOCALHACK
-*) Server core dumped if user aborted before reqInfo->remote_name set 
-*) Server core dumped if setuid/setgid failed
-*) Bug in http_access.c which makes matchexp directories in access control
-   not work correctly
-*) NIS group files only work if using NIS password files as well
-*) Order mutual-failure is broken, does exact opposite
-*) Don't strip Content-Length header from CGI scripts
-*) require group will match user as postfix of another, and fails if a 
-   prefix occurs first
-
 
 
 Known Bugs in 1.5
