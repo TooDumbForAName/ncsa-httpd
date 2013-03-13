@@ -71,13 +71,13 @@ multipart/digest
 multipart/mixed
 multipart/parallel
 text/html                      html htm
-text/x-sgml			sgml sgm
+text/x-sgml		       sgml sgm
 text/plain                     txt
 text/richtext                  rtx             
 text/tab-separated-values      tsv             
 text/x-setext                  etx             
 video/mpeg                     mpeg mpg mpe    
 video/quicktime                qt mov          
+video/x-fli		       fli
 video/x-msvideo                avi             
 video/x-sgi-movie              movie           
-

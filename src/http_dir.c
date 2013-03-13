@@ -1,56 +1,78 @@
-/*
+/************************************************************************
+ * NCSA HTTPd Server
+ * Software Development Group
+ * National Center for Supercomputing Applications
+ * University of Illinois at Urbana-Champaign
+ * 605 E. Springfield, Champaign, IL 61820
+ * httpd@ncsa.uiuc.edu
+ *
+ * Copyright  (C)  1995, Board of Trustees of the University of Illinois
+ *
+ ************************************************************************
+ *
  * http_dir.c: Handles the on-the-fly html index generation
  * 
- * All code contained herein is covered by the Copyright as distributed
- * in the README file in the main directory of the distribution of 
- * NCSA HTTPD.
- *
- * 03-23-93 Rob McCool
- *	Wrote base code up to release 1.3
- * 
- * 03-12-95 blong
- *      Added patch by Roy T. Fielding <fielding@avron.ICS.UCI.EDU>
- *      to fix missing trailing slash for parent directory 
  */
 
 
-/* httpd.h includes proper directory file */
-#include "httpd.h"
+#include "config.h"
+#include "portability.h"
 
-struct ent {
-    char *name;
-    char *icon;
-    char *alt;
-    char *desc;
-    size_t size;
-    time_t lm;
-    struct ent *next;
-};
+#include <stdio.h>
+#ifndef NO_STDLIB_H 
+# include <stdlib.h>
+#endif /* NO_STDLIB_H */
+#ifndef NO_MALLOC_H
+# ifdef NEED_SYS_MALLOC_H
+#  include <sys/malloc.h>
+# else
+#  include <malloc.h>
+# endif /* NEED_SYS_MALLOC_H */
+#endif /* NO_MALLOC_H */
+#include <string.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <ctype.h>
+#include "constants.h"
+#include "http_request.h"
+#include "http_dir.h"
+#include "http_mime.h"
+#include "http_log.h"
+#include "http_config.h"
+#include "http_send.h"
+#include "http_alias.h"
+#include "util.h"
+#include "fdwrap.h"
+#include "allocate.h"
 
+/* Split each item list into two lists, the 0-th entry holds items which 
+ * are valid over this request while the 1-st entry for those valids for
+ * the life time of the server. -achille 
+ */
 
-struct item {
-    int type;
-    char *apply_to;
-    char *apply_path;
-    char *data;
-    struct item *next;
-};
-
-
-static struct item *icon_list, *alt_list, *desc_list, *ign_list;
-static struct item *hdr_list, *rdme_list, *opts_list;
+static struct item *icon_list[2], *alt_list[2], *desc_list[2], *ign_list[2];
+static struct item *hdr_list[2], *rdme_list[2], *opts_list[2];
 
 static int dir_opts;
 
-void init_indexing() {
-    icon_list = NULL;
-    alt_list = NULL;
-    desc_list = NULL;
-    ign_list = NULL;
-
-    hdr_list = NULL;
-    rdme_list = NULL;
-    opts_list = NULL;
+void init_indexing(int local) {
+    icon_list[FI_LOCAL] = NULL;
+    alt_list[FI_LOCAL] = NULL;
+    desc_list[FI_LOCAL] = NULL;
+    ign_list[FI_LOCAL] = NULL;
+    hdr_list[FI_LOCAL] = NULL;
+    rdme_list[FI_LOCAL] = NULL;
+    opts_list[FI_LOCAL] = NULL;
+    if (local == FI_GLOBAL) {
+      icon_list[FI_GLOBAL] = NULL;
+      alt_list[FI_GLOBAL] = NULL;
+      desc_list[FI_GLOBAL] = NULL;
+      ign_list[FI_GLOBAL] = NULL;
+      hdr_list[FI_GLOBAL] = NULL;
+      rdme_list[FI_GLOBAL] = NULL;
+      opts_list[FI_GLOBAL] = NULL;
+    }
 }
 
 void kill_item_list(struct item *p) {
@@ -66,34 +88,45 @@ void kill_item_list(struct item *p) {
     }
 }
 
-void kill_indexing() {
-    kill_item_list(icon_list);
-    kill_item_list(alt_list);
-    kill_item_list(desc_list);
-    kill_item_list(ign_list);
+void kill_indexing(int local) {
 
-    kill_item_list(hdr_list);
-    kill_item_list(rdme_list);
-    kill_item_list(opts_list);
+    kill_item_list(icon_list[FI_LOCAL]);
+    kill_item_list(alt_list[FI_LOCAL]);
+    kill_item_list(desc_list[FI_LOCAL]);
+    kill_item_list(ign_list[FI_LOCAL]);
+    kill_item_list(hdr_list[FI_LOCAL]);
+    kill_item_list(rdme_list[FI_LOCAL]);
+    kill_item_list(opts_list[FI_LOCAL]);
+    
+    if (local == FI_GLOBAL) {
+      kill_item_list(icon_list[FI_GLOBAL]);
+      kill_item_list(alt_list[FI_GLOBAL]);
+      kill_item_list(desc_list[FI_GLOBAL]);
+      kill_item_list(ign_list[FI_GLOBAL]);
+      kill_item_list(hdr_list[FI_GLOBAL]);
+      kill_item_list(rdme_list[FI_GLOBAL]);
+      kill_item_list(opts_list[FI_GLOBAL]);
+    }
+    init_indexing(local);
 }
 
-struct item *new_item(int type, char *to, char *path, char *data, FILE *out) 
-{
+struct item *new_item(per_request *reqInfo,int type, 
+		      char *to, char *path, char *data) {
     struct item *p;
 
     if(!(p = (struct item *)malloc(sizeof(struct item))))
-        die(NO_MEMORY,"new_item",out);
+        die(reqInfo,SC_NO_MEMORY,"new_item");
 
     p->type = type;
     if(data) {
         if(!(p->data = strdup(data)))
-            die(NO_MEMORY,"new_item",out);
+            die(reqInfo,SC_NO_MEMORY,"new_item");
     } else
         p->data = NULL;
 
     if(to) {
         if(!(p->apply_to = (char *)malloc(strlen(to) + 2)))
-            die(NO_MEMORY,"new_item",out);
+            die(reqInfo,SC_NO_MEMORY,"new_item");
         if((type == BY_PATH) && (!is_matchexp(to))) {
             p->apply_to[0] = '*';
             strcpy(&p->apply_to[1],to);
@@ -103,25 +136,29 @@ struct item *new_item(int type, char *to, char *path, char *data, FILE *out)
         p->apply_to = NULL;
 
     if(!(p->apply_path = (char *)malloc(strlen(path) + 2)))
-        die(NO_MEMORY,"new_item",out);
+        die(reqInfo,SC_NO_MEMORY,"new_item");
     sprintf(p->apply_path,"%s*",path);
 
     return p;
 }
 
-void add_alt(int type, char *alt, char *to, char *path, FILE *out) {
+void add_alt(per_request *reqInfo, int local, int type, 
+	     char *alt, char *to, char *path) 
+{
     struct item *p;
 
     if(type == BY_PATH) {
         if(!strcmp(to,"**DIRECTORY**"))
             strcpy(to,"^^DIRECTORY^^");
     }
-    p = new_item(type,to,path,alt,out);
-    p->next = alt_list;
-    alt_list = p;
+    p = new_item(reqInfo,type,to,path,alt);
+    p->next = alt_list[local];
+    alt_list[local] = p;
 }
 
-void add_icon(int type, char *icon, char *to, char *path, FILE *out) {
+void add_icon(per_request *reqInfo, int local, int type, 
+	      char *icon, char *to, char *path) 
+{
     struct item *p;
     char iconbak[MAX_STRING_LEN];
 
@@ -129,61 +166,68 @@ void add_icon(int type, char *icon, char *to, char *path, FILE *out) {
     if(icon[0] == '(') {
         char alt[MAX_STRING_LEN];
         getword(alt,iconbak,',');
-        add_alt(type,&alt[1],to,path,out);
+        add_alt(reqInfo,local,type,&alt[1],to,path);
         iconbak[strlen(iconbak) - 1] = '\0';
     }
     if(type == BY_PATH) {
         if(!strcmp(to,"**DIRECTORY**"))
             strcpy(to,"^^DIRECTORY^^");
     }
-    p = new_item(type,to,path,iconbak,out);
-    p->next = icon_list;
-    icon_list = p;
+    p = new_item(reqInfo,type,to,path,iconbak);
+    p->next = icon_list[local];
+    icon_list[local] = p;
 }
 
-void add_desc(int type, char *desc, char *to, char *path, FILE *out) {
+void add_desc(per_request *reqInfo, int local, int type, 
+	      char *desc, char *to, char *path) 
+{
     struct item *p;
 
-    p = new_item(type,to,path,desc,out);
-    p->next = desc_list;
-    desc_list = p;
+    p = new_item(reqInfo,type,to,path,desc);
+    p->next = desc_list[local];
+    desc_list[local] = p;
 }
 
-void add_ignore(char *ext, char *path, FILE *out) {
+void add_ignore(per_request *reqInfo, int local, char *ext, char *path) 
+{
     struct item *p;
 
-    p = new_item(0,ext,path,NULL,out);
-    p->next = ign_list;
-    ign_list = p;
+    p = new_item(reqInfo,0,ext,path,NULL);
+    p->next = ign_list[local];
+    ign_list[local] = p;
 }
 
-void add_header(char *name, char *path, FILE *out) {
+void add_header(per_request *reqInfo, int local, char *name, char *path) 
+{
     struct item *p;
 
-    p = new_item(0,NULL,path,name,out);
-    p->next = hdr_list;
-    hdr_list = p;
+    p = new_item(reqInfo,0,NULL,path,name);
+    p->next = hdr_list[local];
+    hdr_list[local] = p;
 }
 
-void add_readme(char *name, char *path, FILE *out) {
+void add_readme(per_request *reqInfo, int local, char *name, char *path) 
+{
     struct item *p;
 
-    p = new_item(0,NULL,path,name,out);
-    p->next = rdme_list;
-    rdme_list = p;
+    p = new_item(reqInfo,0,NULL,path,name);
+    p->next = rdme_list[local];
+    rdme_list[local] = p;
 }
 
 
-void add_opts_int(int opts, char *path, FILE *out) {
+void add_opts_int(per_request *reqInfo, int local, int opts, char *path) 
+{
     struct item *p;
 
-    p = new_item(0,NULL,path,NULL,out);
+    p = new_item(reqInfo,0,NULL,path,NULL);
     p->type = opts;
-    p->next = opts_list;
-    opts_list = p;
+    p->next = opts_list[local];
+    opts_list[local] = p;
 }
 
-void add_opts(char *optstr, char *path, FILE *out) {
+void add_opts(per_request *reqInfo, int local, char *optstr, char *path)
+{
     char w[MAX_STRING_LEN];
     int opts = 0;
 
@@ -204,76 +248,93 @@ void add_opts(char *optstr, char *path, FILE *out) {
         else if(!strcasecmp(w,"None"))
             opts = 0;
     }
-    add_opts_int(opts,path,out);
+    add_opts_int(reqInfo,local,opts,path);
 }
 
 
-char *find_item(struct item *list, char *path, int path_only) {
-    struct item *p = list;
+char *find_item(per_request *reqInfo, struct item *list[2], char *path, 
+		int path_only) 
+{
+    struct item *p = NULL;
+    int i;
+    char *file_type,*file_encoding;
 
-    while(p) {
+    file_type = newString(MAX_STRING_LEN,STR_TMP);
+    file_encoding = newString(MAX_STRING_LEN,STR_TMP);
+    
+    for (i=0; i < 2; i++) {
+      for (p = list[i]; p; p = p->next) {
         /* Special cased for ^^DIRECTORY^^ and ^^BLANKICON^^ */
         if((path[0] == '^') || (!strcmp_match(path,p->apply_path))) {
-            if(!(p->apply_to))
-                return p->data;
-            else if(p->type == BY_PATH) {
-                if(!strcmp_match(path,p->apply_to))
-                    return p->data;
-            } else if(!path_only) {
-                char pathbak[MAX_STRING_LEN];
-
-                strcpy(pathbak,path);
-                content_encoding[0] = '\0';
-                set_content_type(pathbak);
-                if(!content_encoding[0]) {
-                    if(p->type == BY_TYPE) {
-                        if(!strcmp_match(content_type,p->apply_to))
-                            return p->data;
-                    }
-                } else {
-                    if(p->type == BY_ENCODING) {
-                        if(!strcmp_match(content_encoding,p->apply_to))
-                            return p->data;
-                    }
-                }
-            }
+	  if(!(p->apply_to)) 
+	    goto found_item;
+	  else if(p->type == BY_PATH) {
+	    if(!strcmp_match(path,p->apply_to))
+	      goto found_item;
+	  } else if(!path_only) {
+	    char pathbak[MAX_STRING_LEN];
+	    
+	    strcpy(pathbak,path);
+	    get_content_type(reqInfo,pathbak,file_type,file_encoding);
+	    if(!file_encoding[0]) {
+	      if(p->type == BY_TYPE) {
+		if(!strcmp_match(file_type,p->apply_to)) 
+		  goto found_item;
+	      }
+	    } else {
+	      if(p->type == BY_ENCODING) {
+		if(!strcmp_match(file_encoding,p->apply_to)) 
+		  goto found_item;
+	      }
+	    }
+	  }
         }
-        p = p->next;
+      }
     }
+    freeString(file_type);
+    freeString(file_encoding);
     return NULL;
+
+  found_item:
+    freeString(file_type);
+    freeString(file_encoding);
+    return p->data;
 }
 
-#define find_icon(p,t) find_item(icon_list,p,t)
-#define find_alt(p,t) find_item(alt_list,p,t)
-#define find_desc(p) find_item(desc_list,p,0)
-#define find_header(p) find_item(hdr_list,p,0)
-#define find_readme(p) find_item(rdme_list,p,0)
+#define find_icon(r,p,t) find_item(r,icon_list,p,t)
+#define find_alt(r,p,t) find_item(r,alt_list,p,t)
+#define find_desc(r,p) find_item(r,desc_list,p,0)
+#define find_header(r,p) find_item(r,hdr_list,p,0)
+#define find_readme(r,p) find_item(r,rdme_list,p,0)
 
 
-int ignore_entry(char *path) {
-    struct item *p = ign_list;
+int ignore_entry(char *path) 
+{
+  int i;
+  struct item *p = NULL;
 
-    while(p) {
-        if(!strcmp_match(path,p->apply_path))
-            if(!strcmp_match(path,p->apply_to))
-                return 1;
-        p = p->next;
-    }
-    return 0;
+  for (i=0; i < 2; i++)
+    for (p = ign_list[i]; p; p = p->next)
+      if(!strcmp_match(path,p->apply_path))
+	if(!strcmp_match(path,p->apply_to))
+	  return 1;
+  return 0;
 }
 
-int find_opts(char *path) {
-    struct item *p = opts_list;
+int find_opts(char *path) 
+{
+  int i;
+  struct item *p = NULL;
 
-    while(p) {
-        if(!strcmp_match(path,p->apply_path))
-            return p->type;
-        p = p->next;
-    }
-    return 0;
+  for (i=0; i < 2; i++)
+    for (p = opts_list[i]; p; p = p->next)
+      if(!strcmp_match(path,p->apply_path))
+	return p->type;
+  return 0;
 }
 
-int insert_readme(char *name, char *readme_fname, int rule, FILE *fd) {
+int insert_readme(per_request *reqInfo, char *name, 
+		  char *readme_fname, int rule) {
     char fn[MAX_STRING_LEN];
     FILE *r;
     struct stat finfo;
@@ -286,35 +347,36 @@ int insert_readme(char *name, char *readme_fname, int rule, FILE *fd) {
         if(stat(fn,&finfo) == -1)
             return 0;
         plaintext=1;
-        if(rule) bytes_sent += fprintf(fd,"<HR>%c",LF);
-        bytes_sent += fprintf(fd,"<PRE>%c",LF);
+        if(rule) rprintf(reqInfo,"<HR>%c",LF);
+        rprintf(reqInfo,"<PRE>%c",LF);
     }
-    else if(rule) bytes_sent += fprintf(fd,"<HR>%c",LF);
-    if(!(r = fopen(fn,"r")))
+    else if(rule) rprintf(reqInfo,"<HR>%c",LF);
+    if(!(r = FOpen(fn,"r")))
         return 0;
-    send_fd(r,fd,NULL);
-    fclose(r);
-    if(plaintext)
-        bytes_sent += fprintf(fd,"</PRE>%c",LF);
+    send_fp(reqInfo,r,NULL);
+    FClose(r);
+    if(plaintext) rprintf(reqInfo,"</PRE>%c",LF);
     return 1;
 }
 
 
-char *find_title(char *filename) {
+char *find_title(per_request *reqInfo, char *filename) {
     char titlebuf[MAX_STRING_LEN], *find = "<TITLE>";
     char filebak[MAX_STRING_LEN];
     FILE *thefile;
     int x,y,n,p;
+    char *file_type, *file_encoding;
 
-    content_encoding[0] = '\0';
+    file_type = newString(MAX_STRING_LEN,STR_TMP);
+    file_encoding = newString(MAX_STRING_LEN,STR_TMP);
+
     strcpy(filebak,filename);
-    set_content_type(filebak);
-    if(((!strcmp(content_type,"text/html")) ||
-        (strcmp(content_type,INCLUDES_MAGIC_TYPE)==0))
-       && (!content_encoding[0]))
-       {
-        if(!(thefile = fopen(filename,"r")))
-            return NULL;
+    get_content_type(reqInfo,filebak,file_type,file_encoding);
+    if(((!strcmp(file_type,"text/html")) ||
+       (strcmp(file_type, INCLUDES_MAGIC_TYPE) == 0))
+       && (!file_encoding[0])) {
+        if(!(thefile = FOpen(filename,"r")))
+	   goto not_found;
         n = fread(titlebuf,sizeof(char),MAX_STRING_LEN - 1,thefile);
         titlebuf[n] = '\0';
         for(x=0,p=0;titlebuf[x];x++) {
@@ -326,15 +388,18 @@ char *find_title(char *filename) {
                     for(y=x;titlebuf[y];y++)
                         if((titlebuf[y] == CR) || (titlebuf[y] == LF))
                             titlebuf[y] = ' ';
-		    fclose(thefile);
+		    FClose(thefile);
+		    freeString(file_type);
+		    freeString(file_encoding);
                     return strdup(&titlebuf[x]);
                 }
             } else p=0;
         }
-	fclose(thefile);
-        return NULL;
+	FClose(thefile);
     }
-    content_encoding[0] = '\0';
+  not_found:
+    freeString(file_type);
+    freeString(file_encoding);
     return NULL;
 }
 
@@ -363,7 +428,8 @@ void escape_html(char *fn) {
     fn[x] = '\0';
 }
 
-struct ent *make_dir_entry(char *path, char *name, FILE *out) {
+struct ent *make_dir_entry(per_request *reqInfo, char *path, 
+			   char *name) {
     struct ent *p;
     struct stat finfo;
     char t[MAX_STRING_LEN];
@@ -378,9 +444,9 @@ struct ent *make_dir_entry(char *path, char *name, FILE *out) {
         return(NULL);
 
     if(!(p=(struct ent *)malloc(sizeof(struct ent))))
-        die(NO_MEMORY,"make_dir_entry",out);
+        die(reqInfo,SC_NO_MEMORY,"make_dir_entry");
     if(!(p->name=(char *)malloc(strlen(name) + 2)))
-        die(NO_MEMORY,"make_dir_entry",out);
+        die(reqInfo,SC_NO_MEMORY,"make_dir_entry");
 
     if(dir_opts & FANCY_INDEXING) {
         if((!(dir_opts & FANCY_INDEXING)) || stat(t,&finfo) == -1) {
@@ -393,35 +459,36 @@ struct ent *make_dir_entry(char *path, char *name, FILE *out) {
         }
         else {
             p->lm = finfo.st_mtime;
-	    p->size = -1;
-	    p->icon = NULL;
-	    p->alt = NULL;
-	    p->desc = NULL;
+            p->size = -1;
+            p->icon = NULL;
+            p->alt = NULL;
+            p->desc = NULL;
             if(S_ISDIR(finfo.st_mode)) {
-                if(!(p->icon = find_icon(t,1)))
+                if(!(p->icon = find_icon(reqInfo,t,1)))
 		    if (p->icon != NULL) free(p->icon);
-                    p->icon = find_icon("^^DIRECTORY^^",1);
-                if(!(tmp = find_alt(t,1))){
+                    p->icon = find_icon(reqInfo,"^^DIRECTORY^^",1);
+                if(!(tmp = find_alt(reqInfo,t,1))){
                     p->alt = (char *) malloc(sizeof(char)*4);
                     strcpy(p->alt,"DIR");
-		} else {
-		  p->alt = strdup(tmp);
-                }
+		}
+		else {
+		    p->alt = strdup(tmp);
+		}
                 p->size = -1;
-                strncpy_dir(p->name,name,MAX_STRING_LEN);
+                strncpy_dir(p->name,name, MAX_STRING_LEN);
             }
             else {
-                p->icon = find_icon(t,0);
-                tmp = find_alt(t,0);
+                p->icon = find_icon(reqInfo,t,0);
+		tmp = find_alt(reqInfo,t,0);
 		if (tmp != NULL) p->alt = strdup(tmp);
                 p->size = finfo.st_size;
                 strcpy(p->name,name);
             }
         }
-        if(p->desc = find_desc(t))
+        if((p->desc = find_desc(reqInfo,t)))
             p->desc = strdup(p->desc);
         if((!p->desc) && (dir_opts & SCAN_HTML_TITLES))
-            p->desc = find_title(t);
+            p->desc = find_title(reqInfo,t);
     }
     else {
         p->icon = NULL;
@@ -435,25 +502,22 @@ struct ent *make_dir_entry(char *path, char *name, FILE *out) {
 }
 
 
-void send_size(size_t size, FILE *fd) {
+void send_size(per_request *reqInfo, size_t size) {
 
     if(size == -1) {
-        fputs("    -",fd);
-        bytes_sent += 5;
+        rputs("    -",reqInfo);
     }
     else {
         if(!size) {
-            fputs("   0K",fd);
-            bytes_sent += 5;
+            rputs("   0K",reqInfo);
         }
         else if(size < 1024) {
-            fputs("   1K",fd);
-            bytes_sent += 5;
+            rputs("   1K",reqInfo);
         }
         else if(size < 1048576)
-            bytes_sent += fprintf(fd,"%4dK",size / 1024);
+            rprintf(reqInfo,"%4dK",size / 1024);
         else
-            bytes_sent += fprintf(fd,"%4dM",size / 1048576);
+            rprintf(reqInfo,"%4dM",size / 1048576);
     }
 }
 
@@ -483,7 +547,7 @@ void terminate_description(char *desc) {
 
 }
 
-void output_directories(struct ent **ar,int n,char *name,FILE *fd)
+void output_directories(per_request *reqInfo, struct ent **ar,int n,char *name)
 {
     int x;
     char anchor[2 * MAX_STRING_LEN + 64],t[MAX_STRING_LEN],t2[MAX_STRING_LEN];
@@ -493,35 +557,38 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
         name[0] = '/'; name[1] = '\0'; 
     }
     /* aaaaargh Solaris sucks. */
-    fflush(fd);
+    rflush(reqInfo);
 
     if(dir_opts & FANCY_INDEXING) {
-        fputs("<PRE>",fd);
-        bytes_sent += 5;
-        if(tp = find_icon("^^BLANKICON^^",1))
-            bytes_sent += (fprintf(fd,"<IMG SRC=\"%s\" ALT=\"     \"> ",tp));
-        bytes_sent += fprintf(fd,"Name                   ");
+        rputs("<PRE>",reqInfo);
+        if((tp = find_icon(reqInfo,"^^BLANKICON^^",1)))
+            rprintf(reqInfo,"<IMG SRC=\"%s\" ALT=\"     \"> ",tp);
+        rprintf(reqInfo,"Name                   ");
         if(!(dir_opts & SUPPRESS_LAST_MOD))
-            bytes_sent += fprintf(fd,"Last modified     ");
+            rprintf(reqInfo,"Last modified     ");
         if(!(dir_opts & SUPPRESS_SIZE))
-            bytes_sent += fprintf(fd,"Size  ");
+            rprintf(reqInfo,"Size  ");
         if(!(dir_opts & SUPPRESS_DESC))
-            bytes_sent += fprintf(fd,"Description");
-        bytes_sent += fprintf(fd,"%c<HR>%c",LF,LF);
+            rprintf(reqInfo,"Description");
+        rprintf(reqInfo,"%c<HR>%c",LF,LF);
     }
     else {
-        fputs("<UL>",fd);
-        bytes_sent += 4;
+        rputs("<UL>",reqInfo);
     }
         
     for(x=0;x<n;x++) {
         if((!strcmp(ar[x]->name,"../")) || (!strcmp(ar[x]->name,".."))) {
+	    int i;
 
 /* Fixes trailing slash for fancy indexing.  Thanks Roy ? */
             make_full_path(name,"../",t);
             getparents(t);
             if(t[0] == '\0') {
                 t[0] = '/'; t[1] = '\0';
+            }
+	    i = strlen(t);
+	    if(t[i-1] != '/') {
+	      t[i-1] = '/'; t[i] = '\0';
             }
             escape_uri(t);
             sprintf(anchor,"<A HREF=\"%s\">",t);
@@ -544,56 +611,51 @@ void output_directories(struct ent **ar,int n,char *name,FILE *fd)
 
         if(dir_opts & FANCY_INDEXING) {
             if(dir_opts & ICONS_ARE_LINKS)
-                bytes_sent += fprintf(fd,"%s",anchor);
-            if((ar[x]->icon) || default_icon[0] || local_default_icon[0]) {
-                bytes_sent += fprintf(fd,"<IMG SRC=\"%s\" ALT=\"[%s]\">",
-                                      ar[x]->icon ? ar[x]->icon : 
-				       local_default_icon[0] ? 
-					local_default_icon : default_icon,
-                                      ar[x]->alt ? ar[x]->alt : "   ");
+                rprintf(reqInfo,"%s",anchor);
+            if((ar[x]->icon) || reqInfo->hostInfo->default_icon[0] 
+		|| local_default_icon[0]) {
+                rprintf(reqInfo,"<IMG SRC=\"%s\" ALT=\"[%s]\">",
+                                ar[x]->icon ? ar[x]->icon :
+                                local_default_icon[0] ?
+                                local_default_icon : 
+				reqInfo->hostInfo->default_icon,
+                                ar[x]->alt ? ar[x]->alt : "   ");
             }
             if(dir_opts & ICONS_ARE_LINKS) {
-                fputs("</A>",fd);
-                bytes_sent += 4;
+                rputs("</A>",reqInfo);
             }
-            bytes_sent += fprintf(fd," %s",anchor);
-            bytes_sent += fprintf(fd,"%-27.27s",t2);
+            rprintf(reqInfo," %s",anchor);
+            rprintf(reqInfo,"%-27.27s",t2);
             if(!(dir_opts & SUPPRESS_LAST_MOD)) {
                 if(ar[x]->lm != -1) {
                     struct tm *ts = localtime(&ar[x]->lm);
                     strftime(t,MAX_STRING_LEN,"%d-%b-%y %H:%M  ",ts);
-                    fputs(t,fd);
-                    bytes_sent += strlen(t);
+                    rputs(t,reqInfo);
                 }
                 else {
-                    fputs("                 ",fd);
-                    bytes_sent += 17;
+                    rputs("                 ",reqInfo);
                 }
             }
             if(!(dir_opts & SUPPRESS_SIZE)) {
-                send_size(ar[x]->size,fd);
-                fputs("  ",fd);
-                bytes_sent += 2;
+                send_size(reqInfo,ar[x]->size);
+                rputs("  ",reqInfo);
             }
             if(!(dir_opts & SUPPRESS_DESC)) {
                 if(ar[x]->desc) {
                     terminate_description(ar[x]->desc);
-                    bytes_sent += fprintf(fd,"%s",ar[x]->desc);
+                    rprintf(reqInfo,"%s",ar[x]->desc);
                 }
             }
         }
         else
-            bytes_sent += fprintf(fd,"<LI> %s %s",anchor,t2);
-        fputc(LF,fd);
-        ++bytes_sent;
+            rprintf(reqInfo,"<LI> %s %s",anchor,t2);
+        rputc(LF,reqInfo);
     }
     if(dir_opts & FANCY_INDEXING) {
-        fputs("</PRE>",fd);
-        bytes_sent += 6;
+        rputs("</PRE>",reqInfo);
     }
     else {
-        fputs("</UL>",fd);
-        bytes_sent += 5;
+        rputs("</UL>",reqInfo);
     }
 }
 
@@ -604,59 +666,57 @@ int dsortf(struct ent **s1,struct ent **s2)
 }
 
     
-void index_directory(char *name, FILE *fd)
+void index_directory(per_request *reqInfo)
 {
     DIR *d;
     struct DIR_TYPE *dstruct;
     int num_ent=0,x;
     struct ent *head,*p,*q;
     struct ent **ar;
-    char unmunged_name[HUGE_STRING_LEN];
     char *tmp;
 
-    strncpy_dir(unmunged_name,name,HUGE_STRING_LEN);
-    unmunge_name(unmunged_name);
 
-    if(!(d=opendir(name)))
-        die(FORBIDDEN,unmunged_name,fd);
+    if(!(d=Opendir(reqInfo->filename)))
+        die(reqInfo,SC_FORBIDDEN,reqInfo->url);
 
-    strcpy(content_type,"text/html");
-    if(!assbackwards) 
-        send_http_header(fd);
+    strcpy(reqInfo->outh_content_type,"text/html");
+    if(reqInfo->http_version != P_HTTP_0_9) 
+        send_http_header(reqInfo);
 
-    if(header_only) {
-      closedir(d);
-      return;
+    if(reqInfo->method == M_HEAD) {
+	Closedir(d);
+        log_transaction(reqInfo);
+	return;
     }
 
-    bytes_sent = 0;
+    reqInfo->bytes_sent = 0;
 
-    dir_opts = find_opts(name);
+    dir_opts = find_opts(reqInfo->filename);
 
 /* Spew HTML preamble */
-    bytes_sent += fprintf(fd,"<HEAD><TITLE>Index of %s</TITLE></HEAD><BODY>",
-                          unmunged_name);
-    fputc(LF,fd);
-    ++bytes_sent;
+    rprintf(reqInfo,"<HEAD><TITLE>Index of %s</TITLE></HEAD><BODY>",
+                          reqInfo->url);
+    rputc(LF,reqInfo);
 
-    if((!(tmp = find_header(name))) || (!(insert_readme(name,tmp,0,fd))))
-        bytes_sent += fprintf(fd,"<H1>Index of %s</H1>%c",unmunged_name,LF);
+    if((!(tmp = find_header(reqInfo, reqInfo->filename))) || 
+	(!(insert_readme(reqInfo,reqInfo->filename,tmp,0))))
+        rprintf(reqInfo, "<H1>Index of %s</H1>%c",reqInfo->url,LF);
 
 /* 
  * Since we don't know how many dir. entries there are, put them into a 
  * linked list and then arrayificate them so qsort can use them. 
  */
     head=NULL;
-    while(dstruct=readdir(d)) {
-        if(p = make_dir_entry(name,dstruct->d_name,fd)) {
+    while((dstruct=readdir(d))) {
+        if((p = make_dir_entry(reqInfo,reqInfo->filename,dstruct->d_name))) {
             p->next = head;
             head = p;
             num_ent++;
         }
     }
     if(!(ar=(struct ent **) malloc(num_ent*sizeof(struct ent *)))) {
-	closedir(d);
-        die(NO_MEMORY,"index_directory",fd);
+	Closedir(d);
+        die(reqInfo,SC_NO_MEMORY,"index_directory");
     }
     p=head;
     x=0;
@@ -670,8 +730,8 @@ void index_directory(char *name, FILE *fd)
           (int (*))dsortf);
 #else
           (int (*)(const void *,const void *))dsortf);
-#endif
-     output_directories(ar,num_ent,unmunged_name,fd);
+#endif /* ULTRIX_BRAIN_DEATH */
+     output_directories(reqInfo,ar,num_ent,reqInfo->url);
      free(ar);
      q = head;
      while(q) {
@@ -684,18 +744,15 @@ void index_directory(char *name, FILE *fd)
          free(q);
          q=p;
      }
-     closedir(d);
+     Closedir(d);
      if(dir_opts & FANCY_INDEXING)
-         if(tmp = find_readme(name))
-             insert_readme(name,tmp,1,fd);
+         if((tmp = find_readme(reqInfo,reqInfo->filename)))
+             insert_readme(reqInfo,reqInfo->filename,tmp,1);
      else {
-         fputs("</UL>",fd);
-         bytes_sent += 5;
+         rputs("</UL>",reqInfo);
      }
 
-     fputs("</BODY>",fd);
-     fflush(fd);
-     bytes_sent += 7;
-     fflush(fd);
-     log_transaction();
+     rputs("</BODY>", reqInfo);
+     rflush(reqInfo);
+     log_transaction(reqInfo);
 }

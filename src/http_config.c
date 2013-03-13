@@ -1,521 +1,74 @@
-/*
+/************************************************************************
+ * NCSA HTTPd Server
+ * Software Development Group
+ * National Center for Supercomputing Applications
+ * University of Illinois at Urbana-Champaign
+ * 605 E. Springfield, Champaign, IL 61820
+ * httpd@ncsa.uiuc.edu
+ *
+ * Copyright  (C)  1995, Board of Trustees of the University of Illinois
+ *
+ ************************************************************************
+ *
  * http_config.c: auxillary functions for reading httpd's config file
  * and converting filenames into a namespace
  *
- * All code contained herein is covered by the Copyright as distributed
- * in the README file in the main directory of the distribution of 
- * NCSA HTTPD.
- *
- * Based on NCSA HTTPd 1.3 by Rob McCool 
- *
- * 10/28/94  cvarela
- *      Added config options AgentLog and RefererLog for extra log info
- *
- * 02/19/95  blong
- *	Added config options MaxServers and StartServers for configuration
- *	defined children
- *
- * 03/21/95 cvarela
- *      Added RefererIgnore to ignore certain URIs when logging referers
- *
- * 06/01/95 blong
- *	Added patch by Conrad Damon (damon@netserver.stanford.edu) that
- *	avoids a cfg_getline loop if a user sets a directory as a password
- *	file.
  */
 
-#include "httpd.h"
-#include "new.h"
+
+#include "config.h"
+#include "portability.h"
+
+#include <stdio.h>
+#ifndef NO_STDLIB_H 
+# include <stdlib.h>
+#endif /* NO_STDLIB_H */
+#ifndef NO_MALLOC_H
+# ifdef NEED_SYS_MALLOC_H
+#  include <sys/malloc.h>
+# else
+#  include <malloc.h>
+# endif /* NEED_SYS_MALLOC_H */
+#endif /* NO_MALLOC_H */
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include "constants.h"
+#include "fdwrap.h"
+#include "http_config.h"
+#include "host_config.h"
+#include "http_mime.h"
+#include "http_access.h"
+#include "http_alias.h"
+#include "http_log.h"
+#include "http_dir.h"
+#include "util.h"
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 
 /* Server config globals */
 int standalone;
 int port;
 uid_t user_id;
 gid_t group_id;
-char server_root[MAX_STRING_LEN];
-char error_fname[MAX_STRING_LEN];
-char xfer_fname[MAX_STRING_LEN];
-char agent_fname[MAX_STRING_LEN];
-char referer_fname[MAX_STRING_LEN];
-char referer_ignore[MAX_STRING_LEN];
-char pid_fname[MAX_STRING_LEN];
-char server_admin[MAX_STRING_LEN];
-char *server_hostname;
-char srm_confname[MAX_STRING_LEN];
 char server_confname[MAX_STRING_LEN];
+int timeout;  
+int do_rfc931;
+char server_root[MAX_STRING_LEN];
+char core_dir[MAX_STRING_LEN];
+char pid_fname[MAX_STRING_LEN];
+#ifdef SETPROCTITLE
+char process_name[MAX_STRING_LEN];
+#endif /* SETPROCTITLE */
 char access_confname[MAX_STRING_LEN];
 char types_confname[MAX_STRING_LEN];
-char annotation_server[MAX_STRING_LEN];  /* SSG 4/5/95 annotation server url */
-int timeout;
-int do_rfc931;
-
-#ifndef NO_PASS
-int max_servers;
-int start_servers;
-#endif
-
-
-void process_server_config(FILE *errors) {
-    FILE *cfg;
-    char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
-    int n=0;
-
-    standalone = 1;
-    port = DEFAULT_PORT;
-    user_id = uname2id(DEFAULT_USER);
-    group_id = gname2id(DEFAULT_GROUP);
-
-#ifndef NO_PASS
-    max_servers = DEFAULT_MAX_DAEMON;
-    start_servers = DEFAULT_START_DAEMON;
-#endif
-
-    /* ServerRoot set in httpd.c */
-    make_full_path(server_root,DEFAULT_ERRORLOG,error_fname);
-    make_full_path(server_root,DEFAULT_XFERLOG,xfer_fname);
-    make_full_path(server_root,DEFAULT_AGENTLOG,agent_fname);
-    make_full_path(server_root,DEFAULT_REFERERLOG,referer_fname);
-    make_full_path(server_root,DEFAULT_PIDLOG,pid_fname);
-    strcpy(referer_ignore,DEFAULT_REFERERIGNORE);
-    strcpy(server_admin,DEFAULT_ADMIN);
-    server_hostname = NULL;
-    make_full_path(server_root,RESOURCE_CONFIG_FILE,srm_confname);
-    /* server_confname set in httpd.c */
-    make_full_path(server_root,ACCESS_CONFIG_FILE,access_confname);
-    make_full_path(server_root,TYPES_CONFIG_FILE,types_confname);
-
-    /* initialize the ann.server to nothing */
-    annotation_server[0] = '\0';
-
-    timeout = DEFAULT_TIMEOUT;
-    do_rfc931 = DEFAULT_RFC931;
-
-
-    if(!(cfg = fopen(server_confname,"r"))) {
-        fprintf(errors,"httpd: could not open server config. file %s\n",server_confname);
-        perror("fopen");
-        exit(1);
-    }
-    /* Parse server config file. Remind me to learn yacc. */
-    while(!(cfg_getline(l,MAX_STRING_LEN,cfg))) {
-        ++n;
-        if((l[0] != '#') && (l[0] != '\0')) {
-            cfg_getword(w,l);
-            if(!strcasecmp(w,"ServerType")) {
-                if(!strcasecmp(l,"inetd")) standalone=0;
-                else if(!strcasecmp(l,"standalone")) standalone=1;
-                else {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,server_confname);
-                    fprintf(errors,"ServerType is either inetd or standalone.\n");
-                    exit(1);
-                }
-            }
-            else if(!strcasecmp(w,"Port")) {
-                cfg_getword(w,l);
-                port = atoi(w);
-            }
-            else if(!strcasecmp(w,"User")) {
-                cfg_getword(w,l);
-                user_id = uname2id(w);
-            } 
-            else if(!strcasecmp(w,"Group")) {
-                cfg_getword(w,l);
-                group_id = gname2id(w);
-            }
-            else if(!strcasecmp(w,"ServerAdmin")) {
-                cfg_getword(w,l);
-                strcpy(server_admin,w);
-            }
-	    /* SSG-4/4/95 read annotation server directive */
-	    else if(!strcasecmp(w,"Annotation-Server")) {
-		cfg_getword(w,l);
-		strcpy(annotation_server, w);
-	    } 
-            else if(!strcasecmp(w,"ServerName")) {
-                cfg_getword(w,l);
-                if(server_hostname)
-                    free(server_hostname);
-                if(!(server_hostname = strdup(w)))
-                    die(NO_MEMORY,"process_resource_config",errors);
-            }
-            else if(!strcasecmp(w,"ServerRoot")) {
-                cfg_getword(w,l);
-                if(!is_directory(w)) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,server_confname);
-                    fprintf(errors,"%s is not a valid directory.\n",w);
-                    exit(1);
-                }
-                strcpy(server_root,w);
-	      make_full_path(server_root,DEFAULT_ERRORLOG,error_fname);
-	      make_full_path(server_root,DEFAULT_XFERLOG,xfer_fname);
-	      make_full_path(server_root,DEFAULT_AGENTLOG,agent_fname);
-	      make_full_path(server_root,DEFAULT_REFERERLOG,referer_fname);
-	      make_full_path(server_root,DEFAULT_PIDLOG,pid_fname);
-	      make_full_path(server_root,RESOURCE_CONFIG_FILE,srm_confname);
-	      make_full_path(server_root,ACCESS_CONFIG_FILE,access_confname);
-	      make_full_path(server_root,TYPES_CONFIG_FILE,types_confname);
-            }
-            else if(!strcasecmp(w,"ErrorLog")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,error_fname);
-                else 
-                    strcpy(error_fname,w);
-            } 
-            else if(!strcasecmp(w,"TransferLog")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,xfer_fname);
-                else strcpy(xfer_fname,w);
-            }
-            else if(!strcasecmp(w,"AgentLog")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,agent_fname);
-                else strcpy(agent_fname,w);
-            }
-            else if(!strcasecmp(w,"RefererLog")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,referer_fname);
-                else strcpy(referer_fname,w);
-            }
-            else if(!strcasecmp(w,"RefererIgnore")) {
-                cfg_getword(w,l);
-                strcpy(referer_ignore,w);
-            }
-            else if(!strcasecmp(w,"PidFile")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,pid_fname);
-                else strcpy(pid_fname,w);
-            }
-            else if(!strcasecmp(w,"AccessConfig")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,access_confname);
-                else strcpy(access_confname,w);
-            }
-            else if(!strcasecmp(w,"ResourceConfig")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,srm_confname);
-                else strcpy(srm_confname,w);
-            }
-            else if(!strcasecmp(w,"TypesConfig")) {
-                cfg_getword(w,l);
-                if(w[0] != '/')
-                    make_full_path(server_root,w,types_confname);
-                else strcpy(types_confname,w);
-            }
-            else if(!strcasecmp(w,"Timeout"))
-                timeout = atoi(l);
-            else if(!strcasecmp(w,"IdentityCheck")) {
-                cfg_getword(w,l);
-                if(!strcasecmp(w,"on"))
-                    do_rfc931 = 1;
-                else if(!strcasecmp(w,"off"))
-                    do_rfc931 = 0;
-                else {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            server_confname);
-                    fprintf(errors,"IdentityCheck must be on or off.\n");
-                }
-            }
-	    else if(!strcasecmp(w,"MaxServers")) {
-#ifndef NO_PASS
-		max_servers = atoi(l);
-#else
-		fprintf(errors,"This compile doesn't support MaxServers on line %d of %s:\n",n,server_confname);
-#endif		
-	    }
-	    else if(!strcasecmp(w,"StartServers")) {
-#ifndef NO_PASS
-		start_servers = atoi(l);
-#else
-		fprintf(errors,"This compile doesn't support StartServers on line %d of %s:\n",n,server_confname);
-#endif
-            }
-            else {
-                fprintf(errors,"Syntax error on line %d of %s:\n",n,server_confname);
-                fprintf(errors,"Unknown keyword %s.\n",w);
-                exit(1);
-            }
-        }
-    }
-    fclose(cfg);
-}
-
-/* Document config globals */
-char user_dir[MAX_STRING_LEN];
-char index_name[MAX_STRING_LEN];
-char access_name[MAX_STRING_LEN];
-char document_root[MAX_STRING_LEN];
-char default_type[MAX_STRING_LEN];
 char local_default_type[MAX_STRING_LEN];
-char default_icon[MAX_STRING_LEN];
 char local_default_icon[MAX_STRING_LEN];
-
-void process_resource_config(FILE *errors) {
-    FILE *cfg;
-    char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
-    int n=0;
-
-    strcpy(user_dir,DEFAULT_USER_DIR);
-    strcpy(index_name,DEFAULT_INDEX);
-    strcpy(access_name,DEFAULT_ACCESS_FNAME);
-    strcpy(document_root,DOCUMENT_LOCATION);
-    strcpy(default_type,DEFAULT_TYPE);
-    default_icon[0] = '\0';
-
-    add_opts_int(0,"/",errors);
-
-    if(!(cfg = fopen(srm_confname,"r"))) {
-        fprintf(errors,"httpd: could not open document config. file %s\n",
-                srm_confname);
-        perror("fopen");
-        exit(1);
-    }
-
-    while(!(cfg_getline(l,MAX_STRING_LEN,cfg))) {
-        ++n;
-        if((l[0] != '#') && (l[0] != '\0')) {
-            cfg_getword(w,l);
-            
-            if(!strcasecmp(w,"ScriptAlias")) {
-                char w2[MAX_STRING_LEN];
-            
-                cfg_getword(w,l);
-                cfg_getword(w2,l);
-                if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,
-"ScriptAlias must be followed by a fakename, one space, then a realname.\n");
-                    exit(1);
-                }                
-                add_alias(w,w2,SCRIPT_CGI);
-            }
-            else if(!strcasecmp(w,"OldScriptAlias")) {
-                char w2[MAX_STRING_LEN];
-            
-                cfg_getword(w,l);
-                cfg_getword(w2,l);
-                if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,
-"ScriptAlias must be followed by a fakename, one space, then a realname.\n");
-                    exit(1);
-                }                
-                add_alias(w,w2,SCRIPT_NCSA);
-            }
-            else if(!strcasecmp(w,"UserDir")) {
-                cfg_getword(w,l);
-                if(!strcmp(w,"DISABLED"))
-                    user_dir[0] = '\0';
-                else
-                    strcpy(user_dir,w);
-            }
-            else if(!strcasecmp(w,"DirectoryIndex")) {
-                cfg_getword(w,l);
-                strcpy(index_name,w);
-            } 
-            else if(!strcasecmp(w,"DefaultType")) {
-                cfg_getword(w,l);
-                strcpy(default_type,w);
-            }
-            else if(!strcasecmp(w,"AccessFileName")) {
-                cfg_getword(w,l);
-                strcpy(access_name,w);
-            } 
-            else if(!strcasecmp(w,"DocumentRoot")) {
-                cfg_getword(w,l);
-                if(!is_directory(w)) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,"%s is not a valid directory.\n",w);
-                    exit(1);
-                }
-                strcpy(document_root,w);
-            } 
-            else if(!strcasecmp(w,"Alias")) {
-                char w2[MAX_STRING_LEN];
-        
-                cfg_getword(w,l);
-                cfg_getword(w2,l);
-                if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,
-"Alias must be followed by a fakename, one space, then a realname.\n");
-                    exit(1);
-                }                
-                add_alias(w,w2,STD_DOCUMENT);
-            }
-            else if(!strcasecmp(w,"AddType")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w,l);
-                cfg_getword(w2,l);
-                if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,
-"AddType must be followed by a type, one space, then a file or extension.\n");
-                    exit(1);
-                }
-                add_type(w2,w,errors);
-            }
-            else if(!strcasecmp(w,"AddEncoding")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w,l);
-                cfg_getword(w2,l);
-                if((w[0] == '\0') || (w2[0] == '\0')) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,
-"AddEncoding must be followed by a type, one space, then a file or extension.\n");
-                    exit(1);
-                }
-		 add_encoding(w2,w,errors);
-            }
-            else if(!strcasecmp(w,"Redirect")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w,l);
-                cfg_getword(w2,l);
-                if((w[0] == '\0') || (w2[0] == '\0') || (!is_url(w2))) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,
-"Redirect must be followed by a document, one space, then a URL.\n");
-                    exit(1);
-                }
-                add_redirect(w,w2);
-            }
-            else if(!strcasecmp(w,"FancyIndexing")) {
-                cfg_getword(w,l);
-                if(!strcmp(w,"on"))
-                    add_opts_int(FANCY_INDEXING,"/",errors);
-                else if(!strcmp(w,"off"))
-                    add_opts_int(0,"/",errors);
-                else {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-                    fprintf(errors,"FancyIndexing must be on or off.\n");
-                    exit(1);
-                }
-            }
-            else if(!strcasecmp(w,"AddDescription")) {
-                char desc[MAX_STRING_LEN];
-                int fq;
-                if((fq = ind(l,'\"')) == -1) {
-                    fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                            srm_confname);
-fprintf(errors,"AddDescription must have quotes around the description.\n");
-                    exit(1);
-                }
-                else {
-                    getword(desc,&l[++fq],'\"');
-                    cfg_getword(w,&l[fq]);
-                    add_desc(BY_PATH,desc,w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"IndexIgnore")) {
-                while(l[0]) {
-                    cfg_getword(w,l);
-                    add_ignore(w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"AddIcon")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w2,l);
-                while(l[0]) {
-                    cfg_getword(w,l);
-                    add_icon(BY_PATH,w2,w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"AddIconByType")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w2,l);
-                while(l[0]) {
-                    cfg_getword(w,l);
-                    add_icon(BY_TYPE,w2,w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"AddIconByEncoding")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w2,l);
-                while(l[0]) {
-                    cfg_getword(w,l);
-                    add_icon(BY_ENCODING,w2,w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"AddAlt")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w2,l);
-                while(l[0]) {
-                    cfg_getword(w,l);
-                    add_alt(BY_PATH,w2,w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"AddAltByType")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w2,l);
-                while(l[0]) {
-                    cfg_getword(w,l);
-                    add_alt(BY_TYPE,w2,w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"AddAltByEncoding")) {
-                char w2[MAX_STRING_LEN];
-                cfg_getword(w2,l);
-                while(l[0]) {
-                    cfg_getword(w,l);
-                    add_alt(BY_ENCODING,w2,w,"/",errors);
-                }
-            }
-            else if(!strcasecmp(w,"DefaultIcon")) {
-                cfg_getword(w,l);
-                strcpy(default_icon,w);
-            }
-            else if(!strcasecmp(w,"ReadmeName")) {
-                cfg_getword(w,l);
-                add_readme(w,"/",errors);
-            }
-            else if(!strcasecmp(w,"HeaderName")) {
-                cfg_getword(w,l);
-                add_header(w,"/",errors);
-            }
-            else if(!strcasecmp(w,"IndexOptions"))
-                add_opts(l,"/",errors);
-	    else if (!strcasecmp(w,"ErrorDocument")) {
-		char w2[MAX_STRING_LEN];
-	        cfg_getword(w,l); /* Get errornum */
-		cfg_getword(w2,l); /* Get filename */
-		add_error(w,w2);
-            }
-            else {
-                fprintf(errors,"Syntax error on line %d of %s:\n",n,
-                        srm_confname);
-                fprintf(errors,"Unknown keyword %s.\n",w);
-                exit(1);
-            }
-        }
-    }
-    fclose(cfg);
-
-    Saved_Forced = forced_types;
-    Saved_Encoding = encoding_types;
-    /* Save the number of global aliases */
-    save_aliases();
-}
-
-
-/* Auth Globals */
-char *auth_type;
-char *auth_name;
-char *auth_pwfile;
-char *auth_grpfile;
+int  log_directory_group_write_ok = 0;
+int  log_directory_other_write_ok = 0;
 
 /* Access Globals*/
 int num_sec;
@@ -523,21 +76,722 @@ int num_sec;
 int num_sec_config;
 security_data sec[MAX_SECURITY];
 
-void access_syntax_error(int n, char *err, char *file, FILE *out) {
+#ifndef NO_PASS
+int max_servers;
+int start_servers;
+#endif /* NO_PASS */
+
+static int ConfigErrorCritical=TRUE;
+
+void config_error(char *error_msg, char *filename, int lineno, 
+			 FILE *errors) 
+{
+  fprintf(errors,"Syntax error on line %d of %s:\n", lineno, filename);
+  fprintf(errors,"%s.\n",error_msg);
+  if (ConfigErrorCritical) exit(1);
+}
+
+void config_warn(char *warn_msg, char *filename, int lineno, 
+		 FILE *errors) 
+{
+  fprintf(errors,"Syntax warning on line %d of %s:\n", lineno, filename);
+  fprintf(errors,"%s.\n",warn_msg);
+}
+
+void set_defaults(per_host *host, FILE *errors) 
+{
+  char tmp[MAX_STRING_LEN];
+
+  standalone = 1;
+  port = DEFAULT_PORT;
+  user_id = uname2id(DEFAULT_USER);
+  group_id = gname2id(DEFAULT_GROUP);
+  
+#ifdef SETPROCTITLE
+  strcpy(process_name, "HTTPd");
+#endif /* SETPROCTITLE */
+
+#ifndef NO_PASS
+  max_servers = DEFAULT_MAX_DAEMON;
+  start_servers = DEFAULT_START_DAEMON;
+#endif /* NO_PASS */
+
+  /* ServerRoot set in httpd.c */
+
+  host->address_info.s_addr = htonl(INADDR_ANY);
+
+  set_host_conf_value(host,PH_HTTPD_CONF,HC_LOG_TYPE);
+  host->log_opts = LOG_NONE;
+
+  make_full_path(server_root,DEFAULT_ERRORLOG,tmp);
+  set_host_conf(host,PH_HTTPD_CONF,HC_ERROR_FNAME,tmp);
+
+  make_full_path(server_root,DEFAULT_XFERLOG,tmp);
+  set_host_conf(host,PH_HTTPD_CONF,HC_XFER_FNAME,tmp);
+  strcpy(core_dir,server_root);
+  
+  make_full_path(server_root,DEFAULT_AGENTLOG,tmp);
+  set_host_conf(host,PH_HTTPD_CONF,HC_AGENT_FNAME,tmp);
+    
+  make_full_path(server_root,DEFAULT_REFERERLOG,tmp);
+  set_host_conf(host,PH_HTTPD_CONF,HC_REFERER_FNAME,tmp);
+
+  make_full_path(server_root,RESOURCE_CONFIG_FILE,tmp);
+  set_host_conf(host,PH_HTTPD_CONF,HC_SRM_CONFNAME,tmp);
+
+  set_host_conf(host,PH_HTTPD_CONF,HC_REFERER_IGNORE,DEFAULT_REFERERIGNORE);
+  set_host_conf(host,PH_HTTPD_CONF,HC_SERVER_ADMIN,DEFAULT_ADMIN);
+
+  make_full_path(server_root,ACCESS_CONFIG_FILE,access_confname);
+  make_full_path(server_root,TYPES_CONFIG_FILE,types_confname);
+  make_full_path(server_root,DEFAULT_PIDLOG,pid_fname);
+
+  tmp[0] = '\0';
+  set_host_conf(host,PH_HTTPD_CONF,HC_ANNOT_SERVER,tmp);
+  host->dns_mode = DNS_STD;
+
+  /* initialize keep-alive data to defaults */
+  keep_alive.bAllowKeepAlive = DEFAULT_ALLOW_KEEPALIVE;
+  keep_alive.nMaxRequests = DEFAULT_KEEPALIVE_MAXREQUESTS;
+  keep_alive.nTimeOut = DEFAULT_KEEPALIVE_TIMEOUT;
+
+  timeout = DEFAULT_TIMEOUT;
+  do_rfc931 = DEFAULT_RFC931;
+
+  /* Necessary with new configuration stuff? */
+  
+  /* default resource config stuff */
+  set_host_conf(host,PH_SRM_CONF,SRM_USER_DIR,DEFAULT_USER_DIR);
+  set_host_conf(host,PH_SRM_CONF,SRM_INDEX_NAMES,DEFAULT_INDEX_NAMES);
+  set_host_conf(host,PH_SRM_CONF,SRM_ACCESS_NAME,DEFAULT_ACCESS_FNAME);
+  set_host_conf(host,PH_SRM_CONF,SRM_DOCUMENT_ROOT,DOCUMENT_LOCATION);
+  set_host_conf(host,PH_SRM_CONF,SRM_DEFAULT_TYPE,DEFAULT_TYPE);
+  set_host_conf(host,PH_SRM_CONF,SRM_DEFAULT_ICON,"");
+}
+
+
+
+void process_server_config(per_host *host, FILE *cfg, FILE *errors, 
+			   int virtual) 
+{
+  char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
+  char tmp[MAX_STRING_LEN];
+  static int n;
+  int doneSRM = FALSE;
+  
+  if (!virtual) n=0;
+  
+  /* Parse server config file. Remind me to learn yacc. */
+  while(!(cfg_getline(l,MAX_STRING_LEN,cfg))) {
+    ++n;
+    if((l[0] != '#') && (l[0] != '\0')) {
+      cfg_getword(w,l);
+      
+      if(!strcasecmp(w,"ServerType") && !virtual) {
+	if(!strcasecmp(l,"inetd")) standalone=0;
+	else if(!strcasecmp(l,"standalone")) standalone=1;
+	else config_error("ServerType is either inetd or standalone",
+		    server_confname,n,errors);
+      }
+      else if(!strcasecmp(w,"LogDirGroupWriteOk")) {
+	if(virtual) {
+	  config_warn("LogDirGroupWriteOk directive in <VirtualHost> ignored",
+		      server_confname,n,errors);
+	}
+	else {
+	    log_directory_group_write_ok = 1;
+	}
+      }
+      else if(!strcasecmp(w,"LogDirOtherWriteOk")) {
+	if(virtual) {
+	  config_warn("LogDirOtherWriteOk directive in <VirtualHost> ignored",
+		      server_confname,n,errors);
+	}
+	else {
+	    log_directory_other_write_ok = 1;
+	}
+      }
+      else if(!strcasecmp(w,"CoreDirectory")) {
+        cfg_getword(w,l);
+	if (w[0] != '/')
+	  make_full_path(server_root,w,l);
+         else strcpy(l,w);
+	if(!is_directory(l)) {
+	  sprintf(tmp,"%s is not a valid directory",l);
+	  config_error(tmp,server_confname,n,errors);
+	}
+	strcpy(core_dir,l);
+      }
+      else if(!strcasecmp(w,"Port") && !virtual) {
+	cfg_getword(w,l);
+	port = atoi(w);
+      }
+      else if(!strcasecmp(w,"BindAddress") && !virtual) {
+	struct hostent *hep;
+	unsigned long ina;
+	cfg_getword(w,l);
+	if (!strcmp(w,"*")) {
+	  host->address_info.s_addr = htonl(INADDR_ANY);
+	} else {
+	  hep = gethostbyname(w);
+	  if (hep && hep->h_addrtype == AF_INET &&
+	      hep->h_addr_list[0] && !hep->h_addr_list[1])
+	    {
+	      memcpy(&(host->address_info),hep->h_addr_list[0],
+		     sizeof(struct in_addr));
+	    } else if (!hep && (ina = inet_addr(w)) != -1) {
+	      host->address_info.s_addr = ina;
+	    } else {
+	      config_error("BindAddress must be * or a numeric IP or a name that maps to exactly one address",server_confname,n,errors);
+	    }
+	}
+      }
+#ifdef SETPROCTITLE
+      else if(!strcasecmp(w,"ProcessName") && !virtual) {
+	cfg_getword(w,l);
+	strcpy(process_name,w);
+      }
+#endif /* SETPROCTITLE */
+      else if(!strcasecmp(w,"User") && !virtual) {
+	cfg_getword(w,l);
+	user_id = uname2id(w);
+      } 
+      else if(!strcasecmp(w,"Group")) {
+	cfg_getword(w,l);
+	group_id = gname2id(w);
+      }
+      else if(!strcasecmp(w,"ServerAdmin")) {
+	cfg_getword(w,l);
+	set_host_conf(host,PH_HTTPD_CONF,HC_SERVER_ADMIN,w);
+      }
+      /* SSG-4/4/95 read annotation server directive */
+      else if(!strcasecmp(w,"Annotation-Server")) {
+	cfg_getword(w,l);
+	set_host_conf(host,PH_HTTPD_CONF,HC_ANNOT_SERVER,w);
+      } 
+      else if(!strcasecmp(w,"ServerName")) {
+	cfg_getword(w,l);
+	set_host_conf(host,PH_HTTPD_CONF,HC_SERVER_HOSTNAME,w);
+      }
+      else if(!strcasecmp(w,"ServerRoot")) {
+	cfg_getword(w,l);
+	if(!is_directory(w)) {
+	  sprintf(tmp,"%s is not a valid directory",w);
+	  config_error(tmp,server_confname,n,errors);
+	}
+	strcpy(server_root,w);
+	strcpy(core_dir,w);
+	make_full_path(server_root,DEFAULT_ERRORLOG,tmp);
+	set_host_conf(host,PH_HTTPD_CONF,HC_ERROR_FNAME,tmp);
+	make_full_path(server_root,DEFAULT_XFERLOG,tmp);
+	set_host_conf(host,PH_HTTPD_CONF,HC_XFER_FNAME,tmp);
+	make_full_path(server_root,DEFAULT_AGENTLOG,tmp);
+	set_host_conf(host,PH_HTTPD_CONF,HC_AGENT_FNAME,tmp);
+	make_full_path(server_root,DEFAULT_REFERERLOG,tmp);
+	set_host_conf(host,PH_HTTPD_CONF,HC_REFERER_FNAME,tmp);
+	make_full_path(server_root,RESOURCE_CONFIG_FILE,tmp);
+	set_host_conf(host,PH_HTTPD_CONF,HC_SRM_CONFNAME,tmp);
+
+	if (!virtual) {
+	  make_full_path(server_root,DEFAULT_PIDLOG,pid_fname);
+	  make_full_path(server_root,ACCESS_CONFIG_FILE,access_confname);
+	  make_full_path(server_root,TYPES_CONFIG_FILE,types_confname);
+	}
+      }
+      else if(!strcasecmp(w,"ErrorLog")) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,tmp);
+	else strcpy(tmp,w);
+	set_host_conf(host,PH_HTTPD_CONF,HC_ERROR_FNAME,tmp);
+      } 
+      else if(!strcasecmp(w,"TransferLog")) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,tmp);
+	else strcpy(tmp,w);
+	set_host_conf(host,PH_HTTPD_CONF,HC_XFER_FNAME,tmp);
+      }
+      else if(!strcasecmp(w,"AgentLog")) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,tmp);
+	else strcpy(tmp,w);
+	set_host_conf(host,PH_HTTPD_CONF,HC_AGENT_FNAME,tmp);
+      }
+      else if(!strcasecmp(w,"RefererLog")) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,tmp);
+	else strcpy(tmp,w);
+	set_host_conf(host,PH_HTTPD_CONF,HC_REFERER_FNAME,tmp);
+      }
+      else if(!strcasecmp(w,"RefererIgnore")) {
+	  /*cfg_getword(w,l);*/
+	  sprintf (tmp, " %s ", l);
+	  /*strcpy(tmp,w);*/
+	  set_host_conf(host,PH_HTTPD_CONF,HC_REFERER_IGNORE,tmp);
+      }
+      else if(!strcasecmp(w,"PidFile")) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,pid_fname);
+	else strcpy(pid_fname,w);
+      }
+      else if(!strcasecmp(w,"DNSMode")) {
+        if(!strcasecmp(l,"Maximum")) host->dns_mode = DNS_MAX;
+	else if(!strcasecmp(l,"Standard")) host->dns_mode = DNS_STD;
+        else if(!strcasecmp(l,"Minimum")) host->dns_mode = DNS_MIN;
+	else if(!strcasecmp(l,"None")) host->dns_mode = DNS_NONE;
+        else 
+	  config_error("DNSMode is either Maximum, Standard, Minimum, or None",
+                    server_confname,n,errors);
+      }
+      else if(!strcasecmp(w,"LogOptions")) {
+	while (l[0]) {
+  	  cfg_getword(w,l);
+	  if (!strcasecmp(w,"None")) {
+	    set_host_conf_value(host,PH_HTTPD_CONF,HC_LOG_TYPE);
+	    host->log_opts &= LOG_NONE;
+	  }
+	  if (!strcasecmp(w,"Combined")) {
+	    set_host_conf_value(host,PH_HTTPD_CONF,HC_LOG_TYPE);
+	    host->log_opts |= LOG_COMBINED;
+          } else if (!strcasecmp(w,"Separate")) {
+	    set_host_conf_value(host,PH_HTTPD_CONF,HC_LOG_TYPE);
+	    host->log_opts &= LOG_SEPARATE;
+          } else if (!strcasecmp(w,"ServerName")) {
+            set_host_conf_value(host,PH_HTTPD_CONF,HC_LOG_TYPE);
+            host->log_opts |= LOG_SERVERNAME;
+	  } else if (!strcasecmp(w,"Date")) {
+	    set_host_conf_value(host,PH_HTTPD_CONF,HC_LOG_TYPE);
+	    host->log_opts |= LOG_DATE;
+	  } else {
+	    config_error("Valid LogOptions are Combined or Separate, ServerName",
+			  server_confname,n,errors);	
+          }
+	}
+      }
+      else if(!strcasecmp(w,"AccessConfig") && !virtual) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,access_confname);
+	else strcpy(access_confname,w);
+      }
+      else if(!strcasecmp(w,"ResourceConfig")) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,tmp);
+	else strcpy(tmp,w);
+	set_host_conf(host,PH_HTTPD_CONF,HC_SRM_CONFNAME,tmp);
+	if (!virtual) doneSRM = TRUE;
+	process_resource_config(host,NULL,errors,virtual);
+      }
+      else if(!strcasecmp(w,"TypesConfig")) {
+	cfg_getword(w,l);
+	if(w[0] != '/')
+	  make_full_path(server_root,w,types_confname);
+	else strcpy(types_confname,w);
+      }
+      else if(!strcasecmp(w,"DocumentRoot")) {
+        cfg_getword(w,l);
+        if(!is_directory(w)) {
+          sprintf(tmp,"%s is not a valid directory",w);
+          config_error(tmp,server_confname,n,errors);
+        }
+        /* strip ending / for backward compatibility */
+        if ((strlen(w) > 1) && w[strlen(w) - 1] == '/') w[strlen(w) - 1] = '\0';
+        set_host_conf(host,PH_SRM_CONF,SRM_DOCUMENT_ROOT,w);
+      }
+      else if(!strcasecmp(w,"Timeout"))
+	timeout = atoi(l);
+      else if(!strcasecmp(w,"IdentityCheck")) {
+	cfg_getword(w,l);
+	if(!strcasecmp(w,"on"))
+	  do_rfc931 = TRUE;
+	else if(!strcasecmp(w,"off"))
+	  do_rfc931 = FALSE;
+	else {
+	  config_warn("IdentityCheck must be on or off",
+		      server_confname,n,errors);
+	}
+      }
+      else if(!strcasecmp(w,"KeepAlive")) {
+	cfg_getword(w,l);
+	if(!strcasecmp(w,"on"))
+	  keep_alive.bAllowKeepAlive = 1;
+	else if(!strcasecmp(w,"off"))
+	  keep_alive.bAllowKeepAlive = 0;
+	else {
+	  config_warn("KeepAlive must be on or off",
+		      server_confname,n,errors);
+	}
+      }
+      else if(!strcasecmp(w,"KeepAliveTimeout")) {
+	cfg_getword(w,l);
+	keep_alive.nTimeOut = atoi(w);
+      }
+      else if(!strcasecmp(w,"MaxKeepAliveRequests")) {
+	cfg_getword(w,l);
+	keep_alive.nMaxRequests = atoi(w);
+      }
+      else if(!strcasecmp(w,"MaxServers")) {
+#ifndef NO_PASS
+	max_servers = atoi(l);
+#else
+	config_warn("MaxServers unsupported with NO_PASS compile",
+		    server_confname,n,errors);
+#endif /* NO_PASS */
+      }
+      else if(!strcasecmp(w,"StartServers")) {
+#ifndef NO_PASS
+	start_servers = atoi(l);
+#else		
+	config_warn("StartServers unsupported with NO_PASS compile",
+		    server_confname,n,errors);
+#endif /* NO_PASS */
+      }
+#ifdef DIGEST_AUTH
+      else if(!strcasecmp(w,"AssumeDigestSupport")) {
+      /* Doesn't do anything anymore, but if we take it out, anyone with
+       * it in their configuration files would complain.  *sigh* 
+       */
+      }
+#endif /* DIGEST_AUTH */
+      else if(((!strcasecmp(w,"<VirtualHost")) || (!strcasecmp(w,"<Host")))
+	      && !virtual) {
+	struct hostent *hep;
+	unsigned long ina;
+	per_host *newHost;
+	int virtualhost = FALSE;
+	char name[MAX_STRING_LEN];
+	
+	if (!strcasecmp(w,"<VirtualHost")) virtualhost = TRUE;
+
+	if (!doneSRM) {
+	  process_resource_config(host,NULL,errors,FALSE);
+	  doneSRM = TRUE;
+	}
+	newHost = create_host_conf(host,virtualhost);
+	getword(w,l,'>');
+	getword(name,w,' ');
+	if (!strcasecmp(w,"Optional")) {
+	  ConfigErrorCritical = FALSE;
+        } else if (!strcasecmp(w,"Required")) {
+	  ConfigErrorCritical = TRUE;
+   	}
+	hep = gethostbyname(name);
+	if (hep && hep->h_addrtype == AF_INET &&
+	    hep->h_addr_list[0] && !hep->h_addr_list[1])
+	{
+	    memcpy(&newHost->address_info, hep->h_addr_list[0],
+		   sizeof(struct in_addr));
+        } else if (!hep && (ina = inet_addr(name)) != -1) {
+	    newHost->address_info.s_addr = ina;
+	} else {
+	    config_error("Argument for VirtualHost must be a numeric IP address, or a name that maps to exactly one address",server_confname,n,errors);
+	}
+	if (!virtualhost) newHost->called_hostname = strdup(name);
+	process_server_config(newHost,cfg,errors,TRUE);
+      }
+      else if(((!strcasecmp(w,"</VirtualHost>")) || (!strcasecmp(w,"</Host>")))
+               && virtual) {
+	ConfigErrorCritical = 1;
+	return;
+     }
+     else if(!strcasecmp(w,"<SRMOptions>")) {
+       process_resource_config(host,cfg,errors,virtual);
+     }
+     else {
+	sprintf(tmp,"Unknown keyword %s",w);
+	config_error(tmp,server_confname,n,errors);
+      }
+    }
+  }
+  if (!doneSRM) process_resource_config(host,NULL,errors,FALSE);
+}
+
+void process_resource_config(per_host *host, FILE *open, FILE *errors, 
+			     int virtual) 
+{
+  FILE *cfg;
+  char l[MAX_STRING_LEN],w[MAX_STRING_LEN];
+  char w2[MAX_STRING_LEN];
+  char tmp[MAX_STRING_LEN];
+  int n=0;
+  per_request fakeit;
+  
+  fakeit.out = errors;
+    
+  if (!virtual) add_opts_int(&fakeit,FI_GLOBAL,0,"/");
+ 
+  if (open == NULL) {
+    if(!(cfg = fopen(host->srm_confname,"r"))) {
+      fprintf(errors,"HTTPd: could not open document config file %s\n",
+	      host->srm_confname);
+      perror("fopen");
+      if (ConfigErrorCritical) exit(1);
+	else return;
+    }
+  } else cfg = open;
+  while(!(cfg_getline(l,MAX_STRING_LEN,cfg))) {
+    ++n;
+    if((l[0] != '#') && (l[0] != '\0')) {
+      cfg_getword(w,l);
+      if(!strcasecmp(w,"ScriptAlias")) {
+	cfg_getword(w,l);
+	cfg_getword(w2,l);
+	if((w[0] == '\0') || (w2[0] == '\0')) {
+	  config_error(
+"ScriptAlias must be followed by a fakename, one space, then a realname",
+host->srm_confname,n,errors);
+	}                
+	if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+	  host->translations = NULL;
+	}
+	add_alias(host,w,w2,A_SCRIPT_CGI);
+      }
+      else if(!strcasecmp(w,"OldScriptAlias")) {
+	config_warn("OldScriptAlias directive obsolete, ignored",
+		    host->srm_confname,n,errors);
+      }
+      else if(!strcasecmp(w,"UserDir")) {
+	cfg_getword(w,l);
+	if(!strcmp(w,"DISABLED"))
+	  tmp[0] = '\0';
+	else
+	  strcpy(tmp,w);
+	set_host_conf(host,PH_SRM_CONF,SRM_USER_DIR,tmp);
+      }
+      else if(!strcasecmp(w,"DirectoryIndex")) {
+	set_host_conf(host,PH_SRM_CONF,SRM_INDEX_NAMES,l);
+      } 
+      else if(!strcasecmp(w,"DefaultType")) {
+	cfg_getword(w,l);
+	set_host_conf(host,PH_SRM_CONF,SRM_DEFAULT_TYPE,w);
+      }
+      else if(!strcasecmp(w,"AccessFileName")) {
+	cfg_getword(w,l);
+	set_host_conf(host,PH_SRM_CONF,SRM_ACCESS_NAME,w);
+      } 
+      else if(!strcasecmp(w,"DocumentRoot")) {
+	cfg_getword(w,l);
+	if(!is_directory(w)) {
+	  sprintf(tmp,"%s is not a valid directory",w);
+	  config_error(tmp,host->srm_confname,n,errors);
+	}
+	/* strip ending / for backward compatibility */
+	if (w[strlen(w) - 1] == '/') w[strlen(w) - 1] = '\0';
+	set_host_conf(host,PH_SRM_CONF,SRM_DOCUMENT_ROOT,w);
+      } 
+      else if(!strcasecmp(w,"Alias")) {
+	cfg_getword(w,l);
+	cfg_getword(w2,l);
+	if((w[0] == '\0') || (w2[0] == '\0')) {
+	  config_error(
+"Alias must be followed by a fakename, one space, then a realname",
+host->srm_confname,n,errors);
+	}                
+	if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+	  host->translations = NULL;
+	}
+	add_alias(host,w,w2,A_STD_DOCUMENT);
+      }
+      else if(!strcasecmp(w,"AddType")) {
+	cfg_getword(w,l);
+	cfg_getword(w2,l);
+	if((w[0] == '\0') || (w2[0] == '\0')) {
+	  config_error(
+"AddType must be followed by a type, one space, then a file or extension",
+host->srm_confname,n,errors);
+	}
+	add_type(&fakeit,w2,w);
+      }
+      else if(!strcasecmp(w,"AddEncoding")) {
+	cfg_getword(w,l);
+	cfg_getword(w2,l);
+	if((w[0] == '\0') || (w2[0] == '\0')) {
+	  config_error(
+"AddEncoding must be followed by a type, one space, then a file or extension",
+host->srm_confname,n,errors);
+	}
+	add_encoding(&fakeit,w2,w);
+      }
+      else if(!strcasecmp(w,"Redirect") || !strcasecmp(w,"RedirectTemp")) {
+	cfg_getword(w,l);
+	cfg_getword(w2,l);
+	if((w[0] == '\0') || (w2[0] == '\0') || 
+	   !(is_url(w2) || (w2[0] == '/'))) 
+	{
+	  config_error(
+"Redirect must be followed by a document, one space, then a URL",
+host->srm_confname,n,errors);
+	}
+	if (w2[0] == '/') {
+	  char w3[MAX_STRING_LEN];
+	  construct_url(w3,host,w2);
+	  strcpy(w2,w3);
+        }
+	if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+	  host->translations = NULL;
+	}
+	add_redirect(host,w,w2,A_REDIRECT_TEMP);
+      }
+      else if(!strcasecmp(w,"RedirectPermanent")) {
+	cfg_getword(w,l);
+	cfg_getword(w2,l);
+	if((w[0] == '\0') || (w2[0] == '\0') || 
+           !(is_url(w2) || (w2[0] == '/'))) 
+	{
+	  config_error(
+"RedirectPermanent must be followed by a document, one space, then a URL",
+host->srm_confname,n,errors);
+	}
+	if (!set_host_conf_value(host,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+	  host->translations = NULL;
+	}
+	if (w2[0] == '/') {
+          char w3[MAX_STRING_LEN];
+          construct_url(w3,host,w2);
+          strcpy(w2,w3);
+        }
+	add_redirect(host,w,w2,A_REDIRECT_PERM);
+      }
+      else if(!strcasecmp(w,"FancyIndexing")) {
+	cfg_getword(w,l);
+	if(!strcasecmp(w,"on"))
+	  add_opts_int(&fakeit,FI_GLOBAL,FANCY_INDEXING,"/");
+	else if(!strcasecmp(w,"off"))
+	  add_opts_int(&fakeit,FI_GLOBAL,0,"/");
+	else {
+	  config_error("FancyIndexing must be on or off",
+		       host->srm_confname,n,errors);
+	}
+      }
+      else if(!strcasecmp(w,"AddDescription")) {
+	char desc[MAX_STRING_LEN];
+	int fq;
+	if((fq = ind(l,'\"')) == -1) {
+	  config_error(
+"AddDescription must have quotes around the description",
+host->srm_confname,n,errors);
+	}
+	else {
+	  getword(desc,&l[++fq],'\"');
+	  cfg_getword(w,&l[fq]);
+	  add_desc(&fakeit,FI_GLOBAL,BY_PATH,desc,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"IndexIgnore")) {
+	while(l[0]) {
+	  cfg_getword(w,l);
+	  add_ignore(&fakeit,FI_GLOBAL,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"AddIcon")) {
+	cfg_getword(w2,l);
+	while(l[0]) {
+	  cfg_getword(w,l);
+	  add_icon(&fakeit,FI_GLOBAL,BY_PATH,w2,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"AddIconByType")) {
+	cfg_getword(w2,l);
+	while(l[0]) {
+	  cfg_getword(w,l);
+	  add_icon(&fakeit,FI_GLOBAL,BY_TYPE,w2,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"AddIconByEncoding")) {
+	cfg_getword(w2,l);
+	while(l[0]) {
+	  cfg_getword(w,l);
+	  add_icon(&fakeit,FI_GLOBAL,BY_ENCODING,w2,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"AddAlt")) {
+	cfg_getword(w2,l);
+	while(l[0]) {
+	  cfg_getword(w,l);
+	  add_alt(&fakeit,FI_GLOBAL,BY_PATH,w2,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"AddAltByType")) {
+	cfg_getword(w2,l);
+	while(l[0]) {
+	  cfg_getword(w,l);
+	  add_alt(&fakeit,FI_GLOBAL,BY_TYPE,w2,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"AddAltByEncoding")) {
+	cfg_getword(w2,l);
+	while(l[0]) {
+	  cfg_getword(w,l);
+	  add_alt(&fakeit,FI_GLOBAL,BY_ENCODING,w2,w,"/");
+	}
+      }
+      else if(!strcasecmp(w,"DefaultIcon")) {
+	cfg_getword(w,l);
+	set_host_conf(host,PH_SRM_CONF,SRM_DEFAULT_ICON,w);
+      }
+      else if(!strcasecmp(w,"ReadmeName")) {
+	cfg_getword(w,l);
+	add_readme(&fakeit,FI_GLOBAL,w,"/");
+      }
+      else if(!strcasecmp(w,"HeaderName")) {
+	cfg_getword(w,l);
+	add_header(&fakeit,FI_GLOBAL,w,"/");
+      }
+      else if(!strcasecmp(w,"IndexOptions"))
+	add_opts(&fakeit,FI_GLOBAL,l,"/");
+      else if (!strcasecmp(w,"ErrorDocument")) {
+        if (!set_host_conf_value(host,PH_SRM_CONF,SRM_DOCERRORS)) {
+	  host->doc_errors = NULL;
+	  host->num_doc_errors = 0;
+	}
+	cfg_getword(w,l); /* Get errornum */
+	cfg_getword(w2,l); /* Get filename */
+
+	add_doc_error(host,w,w2);
+      }
+      else if (!strcasecmp(w,"</SRMOptions>")) {
+	Saved_Forced = forced_types;
+        Saved_Encoding = encoding_types;
+	return;
+      }
+      else {
+	sprintf(tmp,"Unknown keyword %s",w);
+	config_error(tmp,host->srm_confname,n,errors);
+      }
+    }
+  }
+  fclose(cfg);
+  
+  Saved_Forced = forced_types;
+  Saved_Encoding = encoding_types;
+
+}
+
+void access_syntax_error(per_request *reqInfo, int n, char *err, FILE *fp, 
+			 char *file) 
+{
     if(!file) {
-        fprintf(out,"Syntax error on line %d of access config. file.\n",n);
-        fprintf(out,"%s\n",err);
+        fprintf(reqInfo->out,
+		"Syntax error on line %d of access config file.\n",n);
+        fprintf(reqInfo->out,"%s\n",err);
+	fclose(fp);
         exit(1);
     }
     else {
         char e[MAX_STRING_LEN];
-        sprintf(e,"httpd: syntax error or override violation in access control file %s, reason: %s",file,err);
-        die(SERVER_ERROR,e,out);
+	FClose(fp);
+        sprintf(e,"HTTPd: syntax error or override violation in access control file %s, reason: %s",file,err);
+        die(reqInfo,SC_SERVER_ERROR,e);
     }
 }
 
-int parse_access_dir(FILE *f, int line, char or, char *dir, 
-                     char *file, FILE *out) 
+int parse_access_dir(per_request *reqInfo, FILE *f, int line, char or, 
+		     char *dir, char *file, int local) 
 {
     char l[MAX_STRING_LEN];
     char w[MAX_STRING_LEN];
@@ -546,25 +800,35 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
     register int x,i;
 
     x = num_sec;
+    if (num_sec > MAX_SECURITY) 
+      access_syntax_error(reqInfo,n,
+            "Too many security entries, increase MAX_SECURITY and recompile",
+	    f,file);
 
     sec[x].opts=OPT_UNSET;
     sec[x].override = or;
-    if(!(sec[x].d = (char *)malloc((sizeof(char)) * (strlen(dir) + 2))))
-        die(NO_MEMORY,"parse_access_dir",out);
+    sec[x].bSatisfy = 0;
+
     if(is_matchexp(dir))
         strcpy(sec[x].d,dir);
     else
         strcpy_dir(sec[x].d,dir);
 
-    sec[x].auth_type = NULL;
-    sec[x].auth_name = NULL;
-    sec[x].auth_pwfile = NULL;
-    sec[x].auth_grpfile = NULL;
+    sec[x].auth_type[0] = '\0';
+    sec[x].auth_name[0] = '\0';
+    sec[x].auth_pwfile[0] = '\0';
+#ifdef DIGEST_AUTH
+    sec[x].auth_digestfile[0] = '\0';
+#endif /* DIGEST_AUTH */
+    sec[x].auth_grpfile[0] = '\0';
     for(i=0;i<METHODS;i++) {
         sec[x].order[i] = DENY_THEN_ALLOW;
         sec[x].num_allow[i]=0;
         sec[x].num_deny[i]=0;
+	sec[x].num_referer_allow[i]=0;
+	sec[x].num_referer_deny[i]=0;
         sec[x].num_auth[i] = 0;
+	sec[x].on_deny[i] = NULL;
     }
 
     while(!(cfg_getline(l,MAX_STRING_LEN,f))) {
@@ -574,7 +838,7 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
 
         if(!strcasecmp(w,"AllowOverride")) {
             if(file)
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             sec[x].override = OR_NONE;
             while(l[0]) {
                 cfg_getword(w,l);
@@ -588,19 +852,21 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                     sec[x].override |= OR_AUTHCFG;
                 else if(!strcasecmp(w,"Indexes"))
                     sec[x].override |= OR_INDEXES;
+		else if(!strcasecmp(w,"Redirect"))
+		    sec[x].override |= OR_REDIRECT;
                 else if(!strcasecmp(w,"None"))
                     sec[x].override = OR_NONE;
                 else if(!strcasecmp(w,"All")) 
                     sec[x].override = OR_ALL;
                 else {
-                    access_syntax_error(n,
-"Unknown keyword in AllowOverride directive.",file,out);
+                    access_syntax_error(reqInfo,n,
+"Unknown keyword in AllowOverride directive.",f,file);
                 }
             }
         } 
         else if(!strcasecmp(w,"Options")) {
             if(!(or & OR_OPTIONS))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             sec[x].opts = OPT_NONE;
             while(l[0]) {
                 cfg_getword(w,l);
@@ -621,79 +887,111 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                 else if(!strcasecmp(w,"All")) 
                     sec[x].opts = OPT_ALL;
                 else {
-                    access_syntax_error(n,
-"Unknown keyword in Options directive.",file,out);
+                    access_syntax_error(reqInfo,n,
+"Unknown keyword in Options directive.",f,file);
                 }
             }
         }
         else if(!strcasecmp(w,"AuthName")) {
             if(!(or & OR_AUTHCFG))
-                access_syntax_error(n,"override violation",file,out);
-            if(sec[x].auth_name) 
-                free(sec[x].auth_name);
-            if(!(sec[x].auth_name = strdup(l)))
-                die(NO_MEMORY,"parse_access_dir",out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
+	    strcpy(sec[x].auth_name,l);
         }
         else if(!strcasecmp(w,"AuthType")) {
             if(!(or & OR_AUTHCFG))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
-            if(sec[x].auth_type) 
-                free(sec[x].auth_type);
-            if(!(sec[x].auth_type = strdup(w)))
-                die(NO_MEMORY,"parse_access_dir",out);
+	    strcpy(sec[x].auth_type, w);
         }
         else if(!strcasecmp(w,"AuthUserFile")) {
             if(!(or & OR_AUTHCFG))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
-            if(sec[x].auth_pwfile) 
-                free(sec[x].auth_pwfile);
-            if(!(sec[x].auth_pwfile = strdup(w)))
-                die(NO_MEMORY,"parse_access_dir",out);
+	    strcpy(sec[x].auth_pwfile, w);
+	    cfg_getword(w,l);
+#ifdef DBM_SUPPORT
+	    if (!strcasecmp (w, "dbm"))
+		sec[x].auth_pwfile_type = AUTHFILETYPE_DBM;
+	    else 
+#endif /* DBM_SUPPORT */
+#ifdef NIS_SUPPORT
+          if (!strcasecmp (w, "nis"))
+              sec[x].auth_pwfile_type = AUTHFILETYPE_NIS;
+          else 
+#endif /* NIS_SUPPORT */
+		sec[x].auth_pwfile_type = AUTHFILETYPE_STANDARD;
         }
+#ifdef DIGEST_AUTH
+        else if(!strcasecmp(w,"AuthDigestFile")) {
+            if(!(or & OR_AUTHCFG))
+                access_syntax_error(reqInfo,n,"override violation",f,file);
+            cfg_getword(w,l);
+	    strcpy(sec[x].auth_digestfile, w);
+	    cfg_getword(w,l);
+#ifdef DBM_SUPPORT
+	    if (!strcasecmp (w, "dbm"))
+		sec[x].auth_digestfile_type = AUTHFILETYPE_DBM;
+	    else 
+#endif /* DBM_SUPPORT */
+#ifdef NIS_SUPPORT
+          if (!strcasecmp (w, "nis"))
+              sec[x].auth_digestfile_type = AUTHFILETYPE_NIS;
+          else 
+#endif /* NIS_SUPPORT */
+		sec[x].auth_digestfile_type = AUTHFILETYPE_STANDARD;
+        }
+#endif /* DIGEST_AUTH */
         else if(!strcasecmp(w,"AuthGroupFile")) {
             if(!(or & OR_AUTHCFG))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
-            if(sec[x].auth_grpfile) 
-                free(sec[x].auth_grpfile);
-            if(!(sec[x].auth_grpfile = strdup(w)))
-                die(NO_MEMORY,"parse_access_dir",out);
+	    strcpy(sec[x].auth_grpfile, w);
+	    cfg_getword(w,l);
+#ifdef DBM_SUPPORT
+	    if (!strcasecmp (w, "dbm"))
+		sec[x].auth_grpfile_type = AUTHFILETYPE_DBM;
+	    else 
+#endif /* DBM_SUPPORT */
+#ifdef NIS_SUPPORT
+          if (!strcasecmp (w, "nis"))
+              sec[x].auth_grpfile_type = AUTHFILETYPE_NIS;
+          else 
+#endif /* NIS_SUPPORT */
+		sec[x].auth_grpfile_type = AUTHFILETYPE_STANDARD;
         }
         else if(!strcasecmp(w,"AddType")) {
             if(!(or & OR_FILEINFO))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
             cfg_getword(w2,l);
             if((w[0] == '\0') || (w2[0] == '\0')) {
-                access_syntax_error(n,
+                access_syntax_error(reqInfo,n,
 "AddType must be followed by a type, one space, then a file or extension.",
-                                    file,out);
+                                    f,file);
             }
-            add_type(w2,w,out);
+            add_type(reqInfo,w2,w);
         }
         else if(!strcasecmp(w,"DefaultType")) {
             if(!(or & OR_FILEINFO))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
             strcpy(local_default_type,w);
         }
         else if(!strcasecmp(w,"AddEncoding")) {
             if(!(or & OR_FILEINFO))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
             cfg_getword(w2,l);
             if((w[0] == '\0') || (w2[0] == '\0')) {
-                access_syntax_error(n,
+                access_syntax_error(reqInfo,n,
 "AddEncoding must be followed by a type, one space, then a file or extension.",
-                                    file,out);
+                                    f,file);
             }
-            add_encoding(w2,w,out);
+            add_encoding(reqInfo,w2,w);
         }
         else if(!strcasecmp(w,"DefaultIcon")) {
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
             strcpy(local_default_icon,w);
         }
@@ -702,94 +1000,163 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
             int fq;
             
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             if((fq = ind(l,'\"')) == -1)
-                access_syntax_error(n,"AddDescription must have quotes",
-                                    file,out);
+                access_syntax_error(reqInfo,n,"AddDescription must have quotes",
+                                    f,file);
             else {
                 getword(desc,&l[++fq],'\"');
                 cfg_getword(w,&l[fq]);
-                add_desc(BY_PATH,desc,w,sec[x].d,out);
+                add_desc(reqInfo,local,BY_PATH,desc,w,sec[x].d);
             }
         }
         else if(!strcasecmp(w,"IndexIgnore")) {
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             while(l[0]) {
                 cfg_getword(w,l);
-                add_ignore(w,sec[x].d,out);
+                add_ignore(reqInfo,local,w,sec[x].d);
             }
         }
         else if(!strcasecmp(w,"AddIcon")) {
             char w2[MAX_STRING_LEN];
             
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w2,l);
             while(l[0]) {
                 cfg_getword(w,l);
-                add_icon(BY_PATH,w2,w,sec[x].d,out);
+                add_icon(reqInfo,local,BY_PATH,w2,w,sec[x].d);
             }
         }
         else if(!strcasecmp(w,"AddIconByType")) {
             char w2[MAX_STRING_LEN];
             
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w2,l);
             while(l[0]) {
                 cfg_getword(w,l);
-                add_icon(BY_TYPE,w2,w,sec[x].d,out);
+                add_icon(reqInfo,local,BY_TYPE,w2,w,sec[x].d);
             }
         }
         else if(!strcasecmp(w,"AddIconByEncoding")) {
             char w2[MAX_STRING_LEN];
             
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w2,l);
             while(l[0]) {
                 cfg_getword(w,l);
-                add_icon(BY_ENCODING,w2,w,sec[x].d,out);
+                add_icon(reqInfo,local,BY_ENCODING,w2,w,sec[x].d);
             }
         }
         else if(!strcasecmp(w,"ReadmeName")) {
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
-            add_readme(w,sec[x].d,out);
+            add_readme(reqInfo,local,w,sec[x].d);
         }
         else if(!strcasecmp(w,"HeaderName")) {
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
-            add_header(w,sec[x].d,out);
+            add_header(reqInfo,local,w,sec[x].d);
         }
         else if(!strcasecmp(w,"IndexOptions")) {
             if(!(or & OR_INDEXES))
-                access_syntax_error(n,"override violation",file,out);
-            add_opts(l,sec[x].d,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
+            add_opts(reqInfo,local,l,sec[x].d);
         }
-        else if(!strcasecmp(w,"Redirect")) {
-            if(!(or & OR_FILEINFO))
-                access_syntax_error(n,"override violation",file,out);
+        else if(!strcasecmp(w,"Redirect") || !strcasecmp(w,"RedirectTemp")) {
+            if(!(or & OR_REDIRECT))
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             cfg_getword(w,l);
             cfg_getword(w2,l);
-            if((w[0] == '\0') || (w2[0] == '\0') || (!is_url(w2))) {
-                access_syntax_error(n,
-"Redirect must be followed by a document, one space, then a URL.",file,out);
-            }
-            if(!file) 
-                add_redirect(w,w2);
-            else
-                access_syntax_error(n,
-"Redirect no longer supported from .htaccess files.",file,out); 
+            if((w[0] == '\0') || (w2[0] == '\0') || 
+	       !(is_url(w2) || (w2[0] == '/')))
+	    {
+                access_syntax_error(reqInfo,n,
+"Redirect must be followed by a document, one space, then a URL.",f,file);
+            } 
+            if(!file) {
+	      if (w2[0] == '/') {
+                char w3[MAX_STRING_LEN];
+                construct_url(w3,gConfiguration,w2);
+                strcpy(w2,w3);
+              }
+	      if (!set_host_conf_value(gConfiguration,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+		gConfiguration->translations = NULL;
+	      }
+	      add_redirect(gConfiguration,w,w2,A_REDIRECT_TEMP);
+	    }
+            else {
+		char tmp[HUGE_STRING_LEN];
+		int len;
+	        if (w2[0] == '/') {
+                   construct_url(tmp,reqInfo->hostInfo,w2);
+	           strcpy(w2,tmp);
+                }
+		strcpy(tmp,reqInfo->url);
+		if (reqInfo->path_info[0]) {
+		  len = strlen(reqInfo->url);
+		  if (reqInfo->url[len-1] == '/')
+		    reqInfo->url[len-1] = '\0';
+                  strcat(tmp,reqInfo->path_info);
+		} 
+		if (!strcmp(tmp,w) || !strcmp_match(tmp,w)) {
+		  FClose(f);
+		  die(reqInfo,SC_REDIRECT_TEMP,w2);
+		}
+	    }
         }
+        else if(!strcasecmp(w,"RedirectPermanent")) {
+            if(!(or & OR_FILEINFO))
+                access_syntax_error(reqInfo,n,"override violation",f,file);
+            cfg_getword(w,l);
+            cfg_getword(w2,l);
+            if((w[0] == '\0') || (w2[0] == '\0') || 
+	       !(is_url(w2) || (w2[0] == '/'))) 
+	    {
+                access_syntax_error(reqInfo,n,
+"Redirect must be followed by a document, one space, then a URL.",f,file);
+            }
+            if(!file) {
+	      if (w2[0] == '/') {
+                char w3[MAX_STRING_LEN];
+                construct_url(w3,gConfiguration,w2);
+                strcpy(w2,w3);
+              }
+	      if (!set_host_conf_value(gConfiguration,PH_SRM_CONF,SRM_TRANSLATIONS)) {
+		gConfiguration->translations = NULL;
+	      }
+	      add_redirect(gConfiguration,w,w2,A_REDIRECT_PERM);
+	    }
+            else {
+                char tmp[HUGE_STRING_LEN];
+                int len;
+                if (w2[0] == '/') {
+                   construct_url(tmp,reqInfo->hostInfo,w2);
+                   strcpy(w2,tmp);
+                }
+                strcpy(tmp,reqInfo->url);
+                if (reqInfo->path_info[0]) {
+                  len = strlen(reqInfo->url);
+                  if (reqInfo->url[len-1] == '/')
+                    reqInfo->url[len-1] = '\0';
+                  strcat(tmp,reqInfo->path_info);
+                }
+                if (!strcmp(tmp,w) || !strcmp_match(tmp,w)) {
+                  FClose(f);
+                  die(reqInfo,SC_REDIRECT_TEMP,w2);
+                }
+            }
+	}
         else if(!strcasecmp(w,"<Limit")) {
             int m[METHODS];
 
             if(!(or & OR_LIMIT))
-                access_syntax_error(n,"override violation",file,out);
+                access_syntax_error(reqInfo,n,"override violation",f,file);
             for(i=0;i<METHODS;i++) m[i] = 0;
             getword(w2,l,'>');
             while(w2[0]) {
@@ -801,7 +1168,7 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
             }
             while(1) {
                 if(cfg_getline(l,MAX_STRING_LEN,f))
-                    access_syntax_error(n,"Limit missing /Limit",file,out);
+                    access_syntax_error(reqInfo,n,"Limit missing /Limit",f,file);
                 n++;
                 if((l[0] == '#') || (!l[0])) continue;
 
@@ -825,53 +1192,126 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
                                 sec[x].order[i] = MUTUAL_FAILURE;
                     }
                     else
-                        access_syntax_error(n,"Unknown order.",file,out);
+                        access_syntax_error(reqInfo,n,"Unknown order.",f,file);
                 } 
                 else if((!strcasecmp(w,"allow"))) {
                     cfg_getword(w,l);
                     if(strcmp(w,"from"))
-                        access_syntax_error(n,
+                        access_syntax_error(reqInfo,n,
                                             "allow must be followed by from.",
-                                            file,out);
+                                            f,file);
                     while(1) {
                         cfg_getword(w,l);
                         if(!w[0]) break;
                         for(i=0;i<METHODS;i++)
                             if(m[i]) {
                                 int q=sec[x].num_allow[i]++;
+				if (q >= MAX_SECURITY)
+                                  access_syntax_error(reqInfo,n,
+	  "Too many allow entries, increase MAX_SECURITY and recompile",
+			                              f,file);
                                 if(!(sec[x].allow[i][q] = strdup(w)))
-                                    die(NO_MEMORY,"parse_access_dir",out);
+                                    die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
                             }
+                    }
+                }
+		else if(!strcasecmp(w,"referer")) {
+		    int ref_type; 
+
+		    cfg_getword(w,l);
+		    if(!strcmp(w,"allow")) {
+		      ref_type = FA_ALLOW; 
+		    } else if (!strcmp(w,"deny")) {
+		      ref_type = FA_DENY;
+		    } else access_syntax_error(reqInfo,n,
+					       "unknown referer type.",
+					       f,file);
+                    cfg_getword(w,l);
+  		    if(strcmp(w,"from"))
+		      access_syntax_error(reqInfo,n,
+				          "allow/deny must be followed by from.",
+					  f,file);
+		    while(1) {
+		      cfg_getword(w,l);
+		      if (!w[0]) break;
+		      for(i=0;i<METHODS;i++)
+			if(m[i]) {
+			  int q;
+			  if (ref_type == FA_ALLOW) {
+			    q=sec[x].num_referer_allow[i]++;
+                            if (q >= MAX_SECURITY)
+			      access_syntax_error(reqInfo,n,
+    "Too many referer allow entries, increase MAX_SECURITY and recompile",
+		                                  f,file);
+			    if(!(sec[x].referer_allow[i][q] = strdup(w)))
+			      die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
+			  } else if (ref_type == FA_DENY) {
+			    q=sec[x].num_referer_deny[i]++;
+                            if (q >= MAX_SECURITY)
+                              access_syntax_error(reqInfo,n,
+    "Too many referer deny entries, increase MAX_SECURITY and recompile",
+                                                  f,file);
+			    if(!(sec[x].referer_deny[i][q] = strdup(w)))
+			      die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
+                          }
+                        }
                     }
                 }
                 else if(!strcasecmp(w,"require")) {
                     for(i=0;i<METHODS;i++)
-                        if(m[i]) {
+                         if(m[i]) {
                             int q=sec[x].num_auth[i]++;
+                            if (q >= MAX_SECURITY)
+                              access_syntax_error(reqInfo,n,
+ 	    "Too many require entries, increase MAX_SECURITY and recompile",
+                                                  f,file);
                             if(!(sec[x].auth[i][q] = strdup(l)))
-                                die(NO_MEMORY,"parse_access_dir",out);
+                                die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
                         }
                 }
                 else if((!strcasecmp(w,"deny"))) {
                     cfg_getword(w,l);
                     if(strcmp(w,"from"))
-                        access_syntax_error(n,
+                        access_syntax_error(reqInfo,n,
                                             "deny must be followed by from.",
-                                            file,out);
+                                            f,file);
                     while(1) {
                         cfg_getword(w,l);
                         if(!w[0]) break;
                         for(i=0;i<METHODS;i++)
                             if(m[i]) {
                                 int q=sec[x].num_deny[i]++;
+                                if (q >= MAX_SECURITY)
+                                  access_syntax_error(reqInfo,n,
+    		"Too many deny entries, increase MAX_SECURITY and recompile",
+                                                      f,file);
                                 if(!(sec[x].deny[i][q] = strdup(w)))
-                                    die(NO_MEMORY,"parse_access_dir",out);
+                                    die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
                             }
                     }
                 }
+		else if((!strcasecmp(w, "satisfy"))){
+		    sec[x].bSatisfy = SATISFY_ALL;       /*default 0 for all*/
+		    cfg_getword(w,l);
+		    if(!w[0]) break;   /*if not specified, assume satisfy all*/
+		    if ((!strcasecmp(w, "any")))
+			sec[x].bSatisfy = SATISFY_ANY;
+		    else if ((strcasecmp(w, "all")))/* unknow word in satisfy*/
+			access_syntax_error(reqInfo,n, 
+					    "Satisfy either any or all.", 
+					    f,file);
+		}
+		else if(!strcasecmp(w,"OnDeny")) {
+                  for(i=0;i<METHODS;i++)
+                     if(m[i]) {
+                       if(!(sec[x].on_deny[i] = strdup(l)))
+                         die(reqInfo,SC_NO_MEMORY,"parse_access_dir");
+                     }
+                }
                 else
-                    access_syntax_error(n,"Unknown keyword in Limit region.",
-                                        file,out);
+                    access_syntax_error(reqInfo,n,
+					"Unknown keyword in Limit region.",
+                                        f,file);
             }
         }
         else if(!strcasecmp(w,"</Directory>"))
@@ -879,7 +1319,7 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
         else {
             char errstr[MAX_STRING_LEN];
             sprintf(errstr,"Unknown method %s",w);
-            access_syntax_error(n,errstr,file,out);
+            access_syntax_error(reqInfo,n,errstr,f,file);
             return -1;
         }
     }
@@ -888,31 +1328,36 @@ int parse_access_dir(FILE *f, int line, char or, char *dir,
 }
 
 
-void parse_htaccess(char *path, char override, FILE *out) {
+void parse_htaccess(per_request *reqInfo, char *path, char override) 
+{
+    struct stat buf;
     FILE *f;
     char t[MAX_STRING_LEN];
     char d[MAX_STRING_LEN];
 
     strcpy(d,path);
-    make_full_path(d,access_name,t);
+    make_full_path(d,reqInfo->hostInfo->access_name,t);
 
-    if((f=fopen(t,"r"))) {
-        parse_access_dir(f,-1,override,d,t,out);
-        fclose(f);
+    if((stat(t, &buf) != -1) && (f=FOpen(t,"r"))) {
+        parse_access_dir(reqInfo,f,-1,override,d,t,FI_LOCAL);
+        FClose(f);
     }
 }
 
 
-void process_access_config(FILE *errors) {
+void process_access_config(FILE *errors) 
+{
     FILE *f;
     char l[MAX_STRING_LEN];
     char w[MAX_STRING_LEN];
     int n;
+    per_request reqInfo;
 
-    num_sec = 0; 
+    reqInfo.out = errors;
+    num_sec = 0;
     n=0;
     if(!(f=fopen(access_confname,"r"))) {
-        fprintf(errors,"httpd: could not open access configuration file %s.\n",
+        fprintf(errors,"HTTPd: could not open access configuration file %s.\n",
                 access_confname);
         perror("fopen");
         exit(1);
@@ -928,126 +1373,32 @@ void process_access_config(FILE *errors) {
 	    exit(1);
 	}
 	getword(w,l,'>');
-	n=parse_access_dir(f,n,OR_ALL,w,NULL,errors);
+	n=parse_access_dir(&reqInfo,f,n,OR_ALL,w,NULL,FI_GLOBAL);
     }
     fclose(f);
     num_sec_config = num_sec;
 }
 
-int get_pw(char *user, char *pw, FILE *errors) {
-    FILE *f;
-    char errstr[MAX_STRING_LEN];
-    char l[MAX_STRING_LEN];
-    char w[MAX_STRING_LEN];
-    struct stat finfo;
-
-/* From Conrad Damon (damon@netserver.standford.edu),
-   Don't start cfg_getline loop if auth_pwfile is a directory. */
-
-    if ((stat (auth_pwfile, &finfo) == -1) || (!S_ISREG(finfo.st_mode))) {
-      sprintf(errstr,"%s is not a valid file.", auth_pwfile);
-      die(SERVER_ERROR,errstr,errors);
-    }
-    if(!(f=fopen(auth_pwfile,"r"))) {
-        sprintf(errstr,"Could not open user file %s",auth_pwfile);
-        die(SERVER_ERROR,errstr,errors);
-    }
-    while(!(cfg_getline(l,MAX_STRING_LEN,f))) {
-        if((l[0] == '#') || (!l[0])) continue;
-        getword(w,l,':');
-
-        if(!strcmp(user,w)) {
-            strcpy(pw,l);
-            fclose(f);
-            return 1;
-        }
-    }
-    fclose(f);
-    return 0;
-}
-
-
-struct ge {
-    char *name;
-    char *members;
-    struct ge *next;
-};
-
-static struct ge *grps;
-
-int init_group(char *grpfile, FILE *out) {
-    FILE *f;
-    struct ge *p;
-    char l[HUGE_STRING_LEN],w[HUGE_STRING_LEN];
-    struct stat finfo;
-
-    if ((stat (grpfile, &finfo) == -1) || (!S_ISREG(finfo.st_mode))) {
-      return 0;
-    }
-
-    if(!(f=fopen(grpfile,"r"))) 
-        return 0;
-
-    grps = NULL;
-    while(!(cfg_getline(l,HUGE_STRING_LEN,f))) {
-        if((l[0] == '#') || (!l[0])) continue;
-        getword(w,l,':');
-        if(!(p = (struct ge *) malloc (sizeof(struct ge)))) {
-	    fclose(f);
-            die(NO_MEMORY,"init_group",out);
-	}
-        if(!(p->name = strdup(w))) {
-	    fclose(f);
-            die(NO_MEMORY,"init_group",out);
-	}
-        if(!(p->members = strdup(l))) {
-	    fclose(f);
-            die(NO_MEMORY,"init_group",out);
-	}
-        p->next = grps;
-        grps = p;
-    }
-    fclose(f);
-    return 1;
-}
-
-/* make global for now. This function is called a lot SSG 4/25/95 */
-char mems[HUGE_STRING_LEN],wrdbuf[HUGE_STRING_LEN];
-int in_group(char *user, char *group) {
-    struct ge *p = grps;
-
-    while(p) {
-        if(!strcmp(p->name,group)) {
-            strcpy(mems,p->members);
-            while(mems[0]) {
-                getword(wrdbuf,mems,' ');
-                if(!strcmp(wrdbuf,user)) 
-                    return 1;
-            }
-        }
-        p=p->next;
-    }
-    return 0;
-}
-
-void kill_group() {
-    struct ge *p = grps, *q;
-
-    while(p) {
-        free(p->name);
-        free(p->members);
-        q=p;
-        p=p->next;
-        free(q);
-    }   
-}
-
-void read_config(FILE *errors)
+void read_config(FILE *errors) 
 {
-    reset_aliases();
-    process_server_config(errors);
-    init_mime();
-    init_indexing();
-    process_resource_config(errors);
-    process_access_config(errors);
+  FILE *cfg;
+  per_host *host;
+
+  host = create_host_conf(NULL,FALSE);
+  set_defaults(host,errors);
+
+  if(!(cfg = fopen(server_confname,"r"))) {
+    fprintf(errors,
+	    "HTTPd: could not open server config. file %s\n",
+	    server_confname);
+    perror("fopen");
+    exit(1);
+  }
+  init_indexing(FI_GLOBAL);
+  process_server_config(host,cfg,errors,FALSE);
+  fclose(cfg);
+  init_mime();
+  /*  process_resource_config(errors); */
+  process_access_config(errors);
+  open_all_logs();
 }

@@ -1,36 +1,66 @@
-/*
- * http_mime.c: Sends/gets MIME headers for requests
- * 
- * All code contained herein is covered by the Copyright as distributed
- * in the README file in the main directory of the distribution of 
- * NCSA HTTPD.
+/************************************************************************
+ * NCSA HTTPd Server
+ * Software Development Group
+ * National Center for Supercomputing Applications
+ * University of Illinois at Urbana-Champaign
+ * 605 E. Springfield, Champaign, IL 61820
+ * httpd@ncsa.uiuc.edu
  *
- * Based on NCSA HTTPd 1.3 by Rob McCool
- * 
- * 
- * 03/19/95 blong
- *      Added set_stat_line as part of making user config error messages work
- *      The correct status line should now be sent back
+ * Copyright  (C)  1995, Board of Trustees of the University of Illinois
  *
- * 04/20/95 blong
- *	Added a modified "B18" from apache patches by Rob Hartill
+ ************************************************************************
+ *
+ * http_mime.c,v 1.106 1996/03/13 18:28:39 blong Exp
+ *
+ ************************************************************************
+ *
+ * http_mime.c: maintains the list of mime types, encodings.  Currently
+ *  still contains functions for setting some HTTP headers, probably be
+ *  moved eventually.
+ * 
  */
 
 
-#include "httpd.h"
-#include "new.h"
+#include "config.h"
+#include "portability.h"
 
-struct mime_ext {
-    char *ext;
-    char *ct;
-    struct mime_ext *next;
-};
+#include <stdio.h>
+#ifndef NO_STDLIB_H 
+# include <stdlib.h>
+#endif /* NO_STDLIB_H */
+#ifndef NO_MALLOC_H
+# ifdef NEED_SYS_MALLOC_H
+#  include <sys/malloc.h>
+# else
+#  include <malloc.h>
+# endif /* NEED_SYS_MALLOC_H */
+#endif /* NO_MALLOC_H */
+#include <string.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <ctype.h>
+#include "constants.h"
+#include "fdwrap.h"
+#include "allocate.h"
+#include "http_mime.h"
+#include "http_log.h"
+#include "http_config.h"
+#include "http_access.h"
+#include "env.h"
+#include "http_request.h"
+#include "util.h"
+
+#if defined(KRB4) || defined(KRB5)
+#define HAVE_KERBEROS
+#endif /* defined(KRB4) || defined(KRB5) */
 
 #if 1
 #define hash(i) (isalpha(i) ? (tolower(i)) - 'a' : 26)
 #else
 #define hash(i) ((i) % 27)
-#endif
+#endif /* 1 */
 
 /* Hash table */
 struct mime_ext *types[27];
@@ -38,25 +68,6 @@ struct mime_ext *forced_types;
 struct mime_ext *encoding_types;
 struct mime_ext *Saved_Forced;
 struct mime_ext *Saved_Encoding;
-
-int content_length;
-char content_type[MAX_STRING_LEN];
-char content_encoding[MAX_STRING_LEN];
-
-char location[MAX_STRING_LEN];
-static char last_modified[MAX_STRING_LEN];
-
-char auth_line[MAX_STRING_LEN];
-
-char *out_headers = NULL;
-char **in_headers_env = NULL;
-char *status_line = NULL;
-char ims[MAX_STRING_LEN]; /* If-modified-since */
-
-extern FILE *agent_log;
-extern FILE *referer_log;
-extern char referer_ignore[MAX_STRING_LEN];
-char referer[HUGE_STRING_LEN];
 
 void hash_insert(struct mime_ext *me) {
     register int i = hash(me->ext[0]);
@@ -80,7 +91,8 @@ void hash_insert(struct mime_ext *me) {
     q->next=me;
 }
 
-void kill_mime() {
+void kill_mime(void) 
+{
     register struct mime_ext *p,*q;
     register int x;
 
@@ -112,14 +124,18 @@ void kill_mime() {
     }
 }
 
-void init_mime() {
+void init_mime(void) 
+{
     char l[MAX_STRING_LEN],w[MAX_STRING_LEN],*ct;
     FILE *f;
+    per_request reqInfo;
     register struct mime_ext *me;
     register int x;
 
-    if(!(f = fopen(types_confname,"r"))) {
-        fprintf(stderr,"httpd: could not open mime types file %s\n",
+    reqInfo.out = stderr;
+
+    if(!(f = FOpen(types_confname,"r"))) {
+        fprintf(stderr,"HTTPd: could not open mime types file %s\n",
                 types_confname);
         perror("fopen");
         exit(1);
@@ -134,51 +150,52 @@ void init_mime() {
         if(l[0] == '#') continue;
         cfg_getword(w,l);
         if(!(ct = (char *)malloc(sizeof(char) * (strlen(w) + 1))))
-            die(NO_MEMORY,"init_mime",stderr);
+            die(&reqInfo,SC_NO_MEMORY,"init_mime");
         strcpy(ct,w);
 
         while(l[0]) {
             cfg_getword(w,l);
             if(!(me = (struct mime_ext *)malloc(sizeof(struct mime_ext))))
-                die(NO_MEMORY,"init_mime",stderr);
+                die(&reqInfo,SC_NO_MEMORY,"init_mime");
             if(!(me->ext = (char *)malloc(sizeof(char) * (strlen(w)+1))))
-                die(NO_MEMORY,"init_mime",stderr);
+                die(&reqInfo,SC_NO_MEMORY,"init_mime");
             for(x=0;w[x];x++)
                 me->ext[x] = (islower(w[x]) ? w[x] : tolower(w[x]));
             me->ext[x] = '\0';
             if(!(me->ct=strdup(ct)))
-                die(NO_MEMORY,"init_mime",stderr);
+                die(&reqInfo,SC_NO_MEMORY,"init_mime");
             me->next=NULL;
             hash_insert(me);
         }
         free(ct);
     }
-    fclose(f);
+    FClose(f);
 }
 
-void dump_types() {
+#ifdef DEBUG
+void dump_types(void) 
+{
     struct mime_ext *p;
     register int x;
 
-/*    for(x=0;x<27;x++) {
+    for(x=0;x<27;x++) {
         p=types[x];
         while(p) {
-            fprintf(stderr,"ext %s: %s\n",p->ext,p->ct);
+            printf("ext %s: %s\n",p->ext,p->ct);
             p=p->next;
         }
-    } */
+    }
     p=forced_types;
     while(p) {
-        fprintf(stderr,"file %s: %s\n",p->ext,p->ct);
+        printf("file %s: %s\n",p->ext,p->ct);
         p=p->next;
     }
 }
+#endif /* DEBUG */
 
-int is_content_type(char *type) {
-    return(!strcmp(content_type,type));
-}
-
-void find_ct(char *file, int store_encoding) {
+void find_ct(per_request *reqInfo, char *file, 
+	     char *content_type, char *content_encoding) 
+{
     int i,l,l2;
     struct mime_ext *p;
     char fn[MAX_STRING_LEN];
@@ -195,7 +212,7 @@ void find_ct(char *file, int store_encoding) {
         while(p) {
             if(!strcmp(p->ext,&fn[i])) {
                 fn[i-1] = '\0';
-                if(store_encoding) {
+                if(content_encoding != NULL) {
                     if(content_encoding[0])
                         sprintf(content_encoding,"%s, %s",content_encoding,
                                 p->ct);
@@ -225,10 +242,10 @@ void find_ct(char *file, int store_encoding) {
     }
 
     if((i = rind(fn,'.')) < 0) {
-	if (local_default_type[0] != '\0') 
-	  strcpy(content_type,local_default_type);
-         else strcpy(content_type,default_type);
-        return;
+        if (local_default_type[0] != '\0')
+          strcpy(content_type,local_default_type);
+         else strcpy(content_type,reqInfo->hostInfo->default_type);
+         return;
     }
     ++i;
     p=types[hash(fn[i])];
@@ -240,99 +257,39 @@ void find_ct(char *file, int store_encoding) {
         }
         p=p->next;
     }
-    if (local_default_type[0] != '\0') 
+    if (local_default_type[0] != '\0')
       strcpy(content_type,local_default_type);
-     else strcpy(content_type,default_type);
+     else strcpy(content_type,reqInfo->hostInfo->default_type);
 }
 
 
-
-void probe_content_type(char *file) {
-    find_ct(file,0);
+void probe_content_type(per_request *reqInfo, char *file) 
+{
+    find_ct(reqInfo,file,reqInfo->outh_content_type,NULL);
 }
 
-void set_content_type(char *file) {
-    find_ct(file,1);
+void set_content_type(per_request *reqInfo, char *file) 
+{
+    find_ct(reqInfo,file,reqInfo->outh_content_type,
+	    reqInfo->outh_content_encoding);
 }
 
-int scan_script_header(FILE *f, FILE *fd) {
-    char w[MAX_STRING_LEN];
-    char *l;
-    int p;
-
-    while(1) {
-        if(getline(w,MAX_STRING_LEN-1,fileno(f),timeout))
-            die(SERVER_ERROR,"httpd: malformed header from script",fd);
-
-/* Always return zero, so as not to cause redirect+sleep3+kill */
-        if(w[0] == '\0') {
-	    if (content_type[0] == '\0') {
-	       if (location[0] != '\0') {
-		 strcpy(content_type,"text/html");
-	       } else {
-	         if (local_default_type[0] != '\0')
-		   strcpy(content_type,local_default_type);
-	          else strcpy(content_type,default_type);
-	       }
-            }
-	    return 0;
-        }                            
-        if(!(l = strchr(w,':')))
-            l = w;
-        *l++ = '\0';
-        if(!strcasecmp(w,"Content-type")) {
-	  /* Thanks Netscape for showing this bug to everyone */
-	  /* delete trailing whitespace, esp. for "server push" */
-	  char *endp = l + strlen(l) - 1;
-	  while ((endp > l) && isspace(*endp)) *endp-- = '\0';
-            sscanf(l,"%s",content_type);
-        } 
-        else if(!strcasecmp(w,"Location")) {
-	/* If we don't already have a status line, make one */
-	    if (!&status_line[0]) {
-      	      status = 302;
-      	      set_stat_line();
-	    }
-      	    sscanf(l,"%s",location);
-	} 
-        else if(!strcasecmp(w,"Status")) {
-            for(p=0;isspace(l[p]);p++);
-            sscanf(&l[p],"%d",&status);
-            if(!(status_line = strdup(&l[p])))
-                die(NO_MEMORY,"scan_script_header",fd);
-        }
-        else {
-            *(--l) = ':';
-            for(p=0;w[p];p++);
-            w[p] = LF;
-            w[++p] = '\0';
-            if(!out_headers) {
-                if(!(out_headers = strdup(w)))
-                    die(NO_MEMORY,"scan_script_header",fd);
-            }
-            else {
-                int loh = strlen(out_headers);
-                out_headers = (char *) realloc(out_headers,
-                                               (loh+strlen(w)+1)*sizeof(char));
-                if(!out_headers)
-                    die(NO_MEMORY,"scan_script_header",fd);
-                strcpy(&out_headers[loh],w);
-            }
-        }
-    }
+void get_content_type(per_request *reqInfo, char *file, 
+		      char *content_type, char *content_encoding)
+{
+    find_ct(reqInfo,file,content_type,content_encoding);
 }
-
-
 
 /* Should remove all the added types from .htaccess files when the 
    child sticks around */
 
-void reset_mime_vars() {
+void reset_mime_vars(void) 
+{
   struct mime_ext *mimes,*tmp;
 
   mimes = forced_types;
   tmp = mimes;
-  while (mimes != Saved_Forced) {
+  while (mimes && (mimes != Saved_Forced)) {
     mimes = mimes->next;
     free(tmp->ext);
     free(tmp->ct);
@@ -345,7 +302,7 @@ void reset_mime_vars() {
   mimes = encoding_types;
   tmp = mimes;
 
-  while (mimes != Saved_Encoding) {
+  while (mimes && (mimes != Saved_Encoding)) {
     mimes = mimes->next;
     free(tmp->ext);
     free(tmp->ct);
@@ -356,236 +313,105 @@ void reset_mime_vars() {
   encoding_types = Saved_Encoding;
 }
 
-void add_type(char *fn, char *t, FILE *out) {
+void add_type(per_request *reqInfo, char *fn, char *t) {
     struct mime_ext *n;
 
     if(!(n=(struct mime_ext *)malloc(sizeof(struct mime_ext))))
-        die(NO_MEMORY,"add_type",out);
+        die(reqInfo,SC_NO_MEMORY,"add_type");
 
     if(!(n->ext = strdup(fn)))
-        die(NO_MEMORY,"add_type",out);
+        die(reqInfo,SC_NO_MEMORY,"add_type");
     if(!(n->ct = strdup(t)))
-        die(NO_MEMORY,"add_type",out);
+        die(reqInfo,SC_NO_MEMORY,"add_type");
     n->next = forced_types;
     forced_types = n;
 }
 
-void add_encoding(char *fn, char *t,FILE *out) {
+void add_encoding(per_request *reqInfo, char *fn, char *t) {
     struct mime_ext *n;
 
     if(!(n=(struct mime_ext *)malloc(sizeof(struct mime_ext))))
-        die(NO_MEMORY,"add_encoding",out);
+        die(reqInfo, SC_NO_MEMORY,"add_encoding");
 
     if(!(n->ext = strdup(fn)))
-        die(NO_MEMORY,"add_encoding",out);
+        die(reqInfo, SC_NO_MEMORY,"add_encoding");
     if(!(n->ct = strdup(t)))
-        die(NO_MEMORY,"add_encoding",out);
+        die(reqInfo, SC_NO_MEMORY,"add_encoding");
     n->next = encoding_types;
     encoding_types = n;
 }
 
-void set_content_length(int l) {
-    content_length = l;
+void set_content_length(per_request *reqInfo, int l) {
+    reqInfo->outh_content_length = l;
 }
 
-int set_last_modified(time_t t, FILE *out) {
+int set_last_modified(per_request *reqInfo, time_t t) {
     struct tm *tms;
-    char ts[MAX_STRING_LEN];
+/*    char ts[MAX_STRING_LEN]; */
 
     tms = gmtime(&t);
-    strftime(ts,MAX_STRING_LEN,HTTP_TIME_FORMAT,tms);
-    strcpy(last_modified,ts);
+    strftime(reqInfo->outh_last_mod,MAX_STRING_LEN,HTTP_TIME_FORMAT,tms);
+/*    strcpy(reqInfo->outh_last_mod,ts); */
 
-    if(!ims[0])
+    if(!reqInfo->inh_if_mod_since[0])
         return 0;
 
-    if(later_than(tms, ims))
-        return die(USE_LOCAL_COPY,NULL,out);
+    if(later_than(tms, reqInfo->inh_if_mod_since))
+        return die(reqInfo,SC_USE_LOCAL_COPY,NULL);
 
     return 0;
 }
 
-void init_header_vars() 
+
+/* This needs to malloc in case a CGI script passes back its own
+ * status_line, so we can free without problem.
+ */
+char* set_stat_line(per_request *reqInfo) 
 {
-    referer[0] = '\0';
-    content_type[0] = '\0';
-    last_modified[0] = '\0';
-    content_length = -1;
-    auth_line[0] = '\0';
-    content_encoding[0] = '\0';
-    location[0] = '\0';
-    ims[0] = '\0';
-    if (status_line != NULL) free(status_line);
-    status_line = NULL;
-    if (out_headers != NULL) free(out_headers);
-    out_headers = NULL;
-
-    if (in_headers_env != NULL) {
-       free_env(in_headers_env);
-       in_headers_env = NULL;
-    } 
-    
-}
-
-int merge_header(char *h, char *v, FILE *out) {
-    register int l,lt;
-    char **t;
-
-    for(l=0;h[l];++l);
-    h[l] = '=';
-    h[++l] = '\0';
-
-    for(t=in_headers_env;*t;++t) {
-        if(!strncmp(*t,h,l)) {
-            lt = strlen(*t);
-            if(!(*t = (char *) realloc(*t,(lt+strlen(v)+3)*sizeof(char))))
-                die(NO_MEMORY,"merge_header",out);
-            (*t)[lt++] = ',';
-            (*t)[lt++] = ' ';
-            strcpy(&((*t)[lt]),v);
-            return 1;
-        }
+    if (reqInfo->status_line) {
+      freeString(reqInfo->status_line);
     }
-    h[l-1] = '\0';
-    return 0;
-}
 
-void get_mime_headers(int fd, FILE *out, char* url) {
-    char w[MAX_STRING_LEN];
-    char l[MAX_STRING_LEN];
-    int num_inh, num_processed;
-    char *t;
-
-    num_inh = 0;
-    num_processed = 0;
-
-    while(!(getline(w,MAX_STRING_LEN-1,fd,timeout))) {
-        if(!w[0]) 
-            return;
-        if((++num_processed) > MAX_HEADERS)
-            die(BAD_REQUEST,"too many header lines",out);
-        if(!(t = strchr(w,':')))
-            continue;
-        *t++ = '\0';
-        while(isspace(*t)) ++t;
-        strcpy(l,t);
-
-        if(!strcasecmp(w,"Content-type")) {
-            strcpy(content_type,l);
-            continue;
-        }
-        if(!strcasecmp(w,"Authorization")) {
-            strcpy(auth_line,l);
-            continue;
-        }
-        if(!strcasecmp(w,"Content-length")) {
-            sscanf(l,"%d",&content_length);
-            continue;
-        }
-        if(!strcasecmp(w,"User-agent")) {
-            fprintf(agent_log, "%s\n", l);
-	    fflush(agent_log);
-        }
-        if(!strcasecmp(w,"Referer")) {
-	    strcpy(referer,l);
-	    if ((!strlen(referer_ignore)) || (!strstr(l,referer_ignore))){
-		fprintf(referer_log, "%s -> %s\n", l, url);
-		fflush(referer_log);
-	    }
-        }
-        if(!strcasecmp(w,"If-modified-since"))
-            strcpy(ims,l);
-
-        http2cgi(w);
-        if(in_headers_env) {
-            if(!merge_header(w,l,out)) {
-                in_headers_env = 
-                    (char **) realloc(in_headers_env,
-                                      (num_inh+2)*sizeof(char *));
-                if(!in_headers_env)
-                    die(NO_MEMORY,"get_mime_headers",out);
-                in_headers_env[num_inh++] = make_env_str(w,l,out);
-                in_headers_env[num_inh] = NULL;
-            }
-        }
-        else {
-            if(!(in_headers_env = (char **) malloc(2*sizeof(char *))))
-                die(NO_MEMORY,"get_mime_headers",out);
-            in_headers_env[num_inh++] = make_env_str(w,l,out);
-            in_headers_env[num_inh] = NULL;
-        }
-    }
-}
-
-
-void dump_default_header(FILE *fd) {
-    fprintf(fd,"Date: %s%c",gm_timestr_822(time(NULL)),LF);
-    fprintf(fd,"Server: %s%c",SERVER_VERSION,LF);
-   
-    if (annotation_server[0])
-	fprintf(fd,"Annotations-cgi: %s%c",annotation_server,LF);
-
-/* Not part of HTTP spec, removed. */
-/*    fprintf(fd,"MIME-version: 1.0%c",LF); */
-}
-
-char* set_stat_line() {
-    if (status_line) free(status_line);
-    switch (status) {
+    switch (reqInfo->status) {
+    case 200:
+	reqInfo->status_line = dupStringP((char *)StatLine200,STR_REQ);
+	break;
+    case 204:
+	reqInfo->status_line = dupStringP((char *)StatLine204,STR_REQ);
+	break;
+    case 301:
+	reqInfo->status_line = dupStringP((char *)StatLine301,STR_REQ);
+	break;
     case 302:
-	status_line = strdup((char *)StatLine302);
+	reqInfo->status_line = dupStringP((char *)StatLine302,STR_REQ);
 	break;
     case 304:
-	status_line = strdup((char *)StatLine304);
+	reqInfo->status_line = dupStringP((char *)StatLine304,STR_REQ);
 	break;
     case 400:
-	status_line = strdup((char *)StatLine400);
+	reqInfo->status_line = dupStringP((char *)StatLine400,STR_REQ);
 	break;
     case 401:
-	status_line = strdup((char *)StatLine401);
+	reqInfo->status_line = dupStringP((char *)StatLine401,STR_REQ);
 	break;
     case 403:
-	status_line = strdup((char *)StatLine403);
+	reqInfo->status_line = dupStringP((char *)StatLine403,STR_REQ);
 	break;
     case 404:
-	status_line = strdup((char *)StatLine404);
+	reqInfo->status_line = dupStringP((char *)StatLine404,STR_REQ);
 	break;
     case 500:
-	status_line = strdup((char *)StatLine500);
+	reqInfo->status_line = dupStringP((char *)StatLine500,STR_REQ);
 	break;
     case 501:
-	status_line = strdup((char *)StatLine501);
+	reqInfo->status_line = dupStringP((char *)StatLine501,STR_REQ);
+	break;
+    case 503:
+	reqInfo->status_line = dupStringP((char *)StatLine503,STR_REQ);
 	break;
     default:
-	status_line = strdup((char *)StatLine200);
+	reqInfo->status_line = dupStringP((char *)StatLine200,STR_REQ);
 	break;
     }
-    return status_line;
-}
-	
-void send_http_header(FILE *fd) {
-    if(!status_line) {
-        if(location[0]) {
-            status = 302;
-	    status_line = strdup((char *)StatLine302);
-        }
-        else {
-	    set_stat_line();
-        }
-    }            
-    begin_http_header(fd,status_line);
-    if(content_type[0])
-        fprintf(fd,"Content-type: %s%c",content_type,LF);
-    if(last_modified[0])
-        fprintf(fd,"Last-modified: %s%c",last_modified,LF);
-    if(content_length >= 0) 
-        fprintf(fd,"Content-length: %d%c",content_length,LF);
-    if(location[0])
-        fprintf(fd,"Location: %s%c",location,LF);
-    if(content_encoding[0])
-        fprintf(fd,"Content-encoding: %s%c",content_encoding,LF);
-    if(out_headers)
-        fprintf(fd,"%s",out_headers);
-    fprintf(fd,"%c",LF);
-    fflush(fd);
+    return reqInfo->status_line;
 }

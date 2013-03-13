@@ -1,0 +1,50 @@
+# With this document, you define the name space that users see of your http
+# server if they access it using localhost (127.0.0.1)
+
+# See the tutorials at http://hoohoo.ncsa.uiuc.edu/docs/tutorials/ for
+# more information.
+
+# The NCSA HTTPd Development Team (httpd@ncsa.uiuc.edu)
+
+
+# DocumentRoot: The directory out of which you will serve your
+# documents. By default, all requests are taken from this directory, but
+# symbolic links and aliases may be used to point to other locations.
+
+DocumentRoot /
+
+# UserDir: The name of the directory which is appended onto a user's home
+# directory if a ~user request is recieved.
+
+UserDir /
+
+# DirectoryIndex: Name of the file to use as a pre-written HTML
+# directory index
+
+DirectoryIndex index.html
+
+DefaultIcon /icons/unknown.xbm
+
+AccessFileName .htaccess
+
+# DefaultType is the default MIME type for documents which the server
+# cannot find the type of from filename extensions.
+
+DefaultType text/plain
+
+# Redirect allows you to tell clients about documents which used to exist in
+# your server's namespace, but do not anymore. This allows you to tell the
+# clients where to look for the relocated document.
+# Format: Redirect fakename url
+
+
+# Aliases: Add here as many aliases as you need, up to 20. The format is 
+# Alias fakename realname
+
+Alias /icons/ /usr/local/etc/httpd/icons/
+
+# ScriptAlias: This controls which directories contain server scripts.
+# Format: ScriptAlias fakename realname
+
+ScriptAlias /cgi-bin/ /usr/local/etc/httpd/cgi-bin/
+

@@ -1,68 +1,103 @@
-/*
+/************************************************************************
+ * NCSA HTTPd Server
+ * Software Development Group
+ * National Center for Supercomputing Applications
+ * University of Illinois at Urbana-Champaign
+ * 605 E. Springfield, Champaign, IL 61820
+ * httpd@ncsa.uiuc.edu
+ *
+ * Copyright  (C)  1995, Board of Trustees of the University of Illinois
+ *
+ ************************************************************************
+ *
+ * http_include.c,v 1.50 1996/03/27 20:44:02 blong Exp
+ *
+ ************************************************************************
+ *
  * http_include.c: Handles the server-parsed HTML documents
  *
- * All code contained herein is covered by the Copyright as distributed
- * in the README file in the main directory of the distribution of 
- * NCSA HTTPD.
- * 
  * Based on NCSA HTTPd 1.3 by Rob McCool
  * 
- *  04-07-95 blong
- *	Fixes bug where substrings of the environment variable might be 
- *	included first as suggested by David Robinson (drtr@ast.cam.ac.uk)
  */
 
-#include "httpd.h"
 
-#define STARTING_SEQUENCE "<!--#"
-#define ENDING_SEQUENCE "-->"
-#define DEFAULT_ERROR_MSG "[an error occurred while processing this directive]"
-#define DEFAULT_TIME_FORMAT "%A, %d-%b-%y %T %Z"
-#define SIZEFMT_BYTES 0
-#define SIZEFMT_KMG 1
+#include "config.h"
+#include "portability.h"
+
+#include <stdio.h>
+#ifndef NO_STDLIB_H 
+# include <stdlib.h>
+#endif /* NO_STDLIB_H */
+#include <signal.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/param.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <ctype.h>
+#include "constants.h"
+#include "fdwrap.h"
+#include "allocate.h"
+#include "http_include.h"
+#include "http_mime.h"
+#include "http_log.h"
+#include "http_config.h"
+#include "http_request.h"
+#include "http_send.h"
+#include "cgi.h"
+#include "http_access.h"
+#include "http_alias.h"
+#include "http_dir.h"
+#include "util.h"
+#include "env.h"
 
 /* These are stored statically so that they can be reformatted quickly */
 static time_t date,lm;
 
 /* ------------------------ Environment function -------------------------- */
 
-#define NUM_INCLUDE_VARS 5
-
-char **add_include_vars(char **env,char *file, char *path_args, char *args, 
-                        char *timefmt,FILE *out)
+int add_include_vars(per_request *reqInfo, char *timefmt)
 {
-    int x;
     struct stat finfo;
-    char ufile[HUGE_STRING_LEN];
-    char *t;
+    char *uri;
+    char *str; 
 
-    if(!(env = new_env(env,NUM_INCLUDE_VARS,&x)))
-        die(NO_MEMORY,"add_include_vars",out);
+    uri = newString(HUGE_STRING_LEN,STR_TMP);
+
     date = time(NULL);
-    env[x++] = make_env_str("DATE_LOCAL",ht_time(date,timefmt,0),out);
-    env[x++] = make_env_str("DATE_GMT",ht_time(date,timefmt,1),out);
+    make_env_str(reqInfo,"DATE_LOCAL",ht_time(date,timefmt,0));
+    make_env_str(reqInfo,"DATE_GMT",ht_time(date,timefmt,1));
 
-    if(stat(file,&finfo) != -1) {
+    if(stat(reqInfo->filename,&finfo) != -1) {
         lm = finfo.st_mtime;
-        env[x++] = make_env_str("LAST_MODIFIED",ht_time(lm,timefmt,0),out);
+        make_env_str(reqInfo,"LAST_MODIFIED",ht_time(lm,timefmt,0));
     }
-    strcpy(ufile,file);
-    unmunge_name(ufile);
-    env[x++] = make_env_str("DOCUMENT_URI",ufile,out);
-    if(t = strrchr(ufile,'/'))
-        ++t;
+    if((str = strrchr(reqInfo->filename,'/')))
+      ++str;
     else
-        t = ufile;
-    env[x++] = make_env_str("DOCUMENT_NAME",t,out);
-    env[x] = NULL;
-    return env;
+      str = reqInfo->url;
+    make_env_str(reqInfo,"DOCUMENT_NAME",str);
+
+    /* Jump through hoops because <=1.4 set DOCUMENT_URI to
+       include index file name */
+    if (reqInfo->url[strlen(reqInfo->url)-1] == '/' ){
+      strncpy(uri,reqInfo->url,HUGE_STRING_LEN);
+      strncat(uri,str,HUGE_STRING_LEN-strlen(uri));
+      make_env_str(reqInfo,"DOCUMENT_URI",uri);
+    } else {
+      make_env_str(reqInfo,"DOCUMENT_URI",reqInfo->url);
+    }
+
+
+    freeString(uri);
+    return TRUE;
 }
 
 #define GET_CHAR(f,c,r) \
  { \
    int i = getc(f); \
    if(feof(f) || ferror(f) || (i == -1)) { \
-        fclose(f); \
         return r; \
    } \
    c = (char)i; \
@@ -70,47 +105,45 @@ char **add_include_vars(char **env,char *file, char *path_args, char *args,
 
 /* --------------------------- Parser functions --------------------------- */
 
-int find_string(FILE *in,char *str, FILE *out) {
+int find_string(per_request *reqInfo, FILE *fp, char *str) {
     int x,l=strlen(str),p;
     char c;
 
     p=0;
     while(1) {
-        GET_CHAR(in,c,1);
+        GET_CHAR(fp,c,1);
         if(c == str[p]) {
             if((++p) == l)
                 return 0;
         }
         else {
-            if(out) {
+            if(reqInfo->out) {
                 if(p) {
                     for(x=0;x<p;x++) {
-                        putc(str[x],out);
-                        ++bytes_sent;
+                        rputc(str[x],reqInfo);
                     }
                 }
-                putc(c,out);
-                ++bytes_sent;
+                rputc(c,reqInfo);
             }
             p=0;
         }
     }
 }
 
-char *get_tag(FILE *in, char *tag) {
+char *get_tag(FILE *fp, char *tag) {
     char *t = tag, *tag_val, c;
     int n;
 
     n = 0;
     while(1) {
-        GET_CHAR(in,c,NULL);
+        GET_CHAR(fp,c,NULL);
         if(!isspace(c)) break;
     }
     /* problem: this drops tags starting with - or -- (tough s***) */
     if(c == '-') {
-        GET_CHAR(in,c,NULL);
+        GET_CHAR(fp,c,NULL);
         if(c == '-') {
-            GET_CHAR(in,c,NULL);
+            GET_CHAR(fp,c,NULL);
             if(c == '>') {
                 strcpy(tag,"done");
                 return tag;
@@ -124,21 +157,21 @@ char *get_tag(FILE *in, char *tag) {
             return NULL;
         }
         if((*t = c) == '\\') {
-            GET_CHAR(in,c,NULL);
+            GET_CHAR(fp,c,NULL);
             *t = c;
         } else if(*t == '=') {
             *t++ = '\0';
             tag_val = t;
-            GET_CHAR(in,c,NULL);
+            GET_CHAR(fp,c,NULL);
             if(c == '\"') {
                 while(1) {
-                    GET_CHAR(in,c,NULL);
+                    GET_CHAR(fp,c,NULL);
                     if(++n == MAX_STRING_LEN) {
                         t[MAX_STRING_LEN - 1] = '\0';
                         return NULL;
                     }
                     if((*t = c) == '\\') {
-                        GET_CHAR(in,c,NULL);
+                        GET_CHAR(fp,c,NULL);
                         *t = c;
                     } else if(*t == '\"') {
                         *t = '\0';
@@ -150,23 +183,23 @@ char *get_tag(FILE *in, char *tag) {
                 return NULL;
         }
         ++t;
-        GET_CHAR(in,c,NULL);
+        GET_CHAR(fp,c,NULL);
     }
 }
 
-int get_directive(FILE *in,char *d) {
+int get_directive(FILE *fp, char *d) {
     char c;
 
     /* skip initial whitespace */
     while(1) {
-        GET_CHAR(in,c,1);
+        GET_CHAR(fp,c,1);
         if(!isspace(c))
             break;
     }
     /* now get directive */
     while(1) {
         *d++ = c;
-        GET_CHAR(in,c,1);
+        GET_CHAR(fp,c,1);
         if(isspace(c))
             break;
     }
@@ -177,471 +210,677 @@ int get_directive(FILE *in,char *d) {
 /* --------------------------- Action handlers ---------------------------- */
 
 
-void send_parsed_content(char *file, FILE *f, FILE *fd, 
-                         char *path_args, char *args,
-                         char **env,int noexec);
-
-int send_included_file(char *file, FILE *out, char **env, char *fn) 
+int send_included_file(per_request *reqInfo, char *fn) 
 {
-    FILE *f;
+    FILE *fp;
     struct stat finfo;
     int allow;
     char op;
 
-    if(stat(file,&finfo) == -1)
+    if(stat(reqInfo->filename,&finfo) == -1)
         return -1;
-    evaluate_access(file,&finfo,M_GET,&allow,&op,out);
+    evaluate_access(reqInfo,&finfo,&allow,&op);
     if(!allow)
         return -1;
-    set_content_type(file);
-    if((op & OPT_INCLUDES) && (!strcmp(content_type,INCLUDES_MAGIC_TYPE))) {
-        if(!(f = fopen(file,"r")))
+    set_content_type(reqInfo,reqInfo->filename);
+    if((op & OPT_INCLUDES) && 
+       (!strcmp(reqInfo->outh_content_type,INCLUDES_MAGIC_TYPE))) {
+        if(!(fp = FOpen(reqInfo->filename,"r")))
             return -1;
-        send_parsed_content(file,f,out,"","",env,op & OPT_INCNOEXEC);
+        send_parsed_content(reqInfo,fp,op & OPT_INCNOEXEC);
         chdir_file(fn); /* grumble */
     }
-    else if(!strcmp(content_type,CGI_MAGIC_TYPE))
+    else if(!strcmp(reqInfo->outh_content_type,CGI_MAGIC_TYPE))
         return -1;
     else {
-        if(!(f=fopen(file,"r")))
+        if(!(fp=FOpen(reqInfo->filename,"r")))
             return -1;
-        send_fd(f,out,NULL);
+        send_fp(reqInfo,fp,NULL);
     }
-    fclose(f);
+    FClose(fp);
     return 0;
 }
 
-int handle_include(FILE *in, FILE *out, char *fn, char **env, char *error) {
-    char tag[MAX_STRING_LEN],errstr[MAX_STRING_LEN];
+int handle_include(per_request *reqInfo, FILE *fp, char *error) {
+    char *tag,*errstr;
     char *tag_val;
 
+    tag = newString(MAX_STRING_LEN,STR_TMP);
+    errstr = newString(MAX_STRING_LEN,STR_TMP);
+
     while(1) {
-        if(!(tag_val = get_tag(in,tag)))
+        if(!(tag_val = get_tag(fp,tag))) {
+	    freeString(tag);
+	    freeString(errstr);
             return 1;
+        }
         if(!strcmp(tag,"file")) {
-            char dir[MAX_STRING_LEN],to_send[MAX_STRING_LEN];
+            char *dir,*to_send;
+	    per_request *newInfo;
+
+	    dir = newString(MAX_STRING_LEN,STR_TMP);
+	    to_send = newString(MAX_STRING_LEN,STR_TMP);
 
             getparents(tag_val); /* get rid of any nasties */
-            getwd(dir);
+            getcwd(dir,MAX_STRING_LEN);
             make_full_path(dir,tag_val,to_send);
-            if(send_included_file(to_send,out,env,fn)) {
+	    newInfo = continue_request(reqInfo, KEEP_ENV | KEEP_AUTH);
+	    newInfo->http_version = P_HTTP_0_9;
+	    strcpy(newInfo->url,tag_val);
+	    strcpy(newInfo->args,reqInfo->args);
+	    strcpy(newInfo->filename,to_send);
+            if(send_included_file(newInfo,reqInfo->filename)) {
                 sprintf(errstr,"unable to include %s in parsed file %s",
-                        tag_val, fn);
-                log_error_noclose(errstr);
-                bytes_sent += fprintf(out,"%s",error);
+                        newInfo->filename,reqInfo->filename );
+                log_error(errstr,reqInfo->hostInfo->error_log);
+                rprintf(reqInfo,"%s",error);
             }            
+	    reqInfo->bytes_sent += newInfo->bytes_sent;
+	    free_request(newInfo,ONLY_LAST);
+	    freeString(dir);
+	    freeString(to_send);
         } 
         else if(!strcmp(tag,"virtual")) {
-            if(translate_name(tag_val,out) != STD_DOCUMENT) {
-                bytes_sent += fprintf(out,"%s",error);
-                log_error_noclose(errstr);
-            }  
-            else if(send_included_file(tag_val,out,env,fn)) {
-                sprintf(errstr,"unable to include %s in parsed file %s",
-                        tag_val, fn);
-                log_error_noclose(errstr);
-                bytes_sent += fprintf(out,"%s",error);
-            }
+	    per_request *newInfo;
+	    newInfo = continue_request(reqInfo,  KEEP_ENV | KEEP_AUTH);
+	    newInfo->http_version = P_HTTP_0_9;
+	    strcpy(newInfo->url,tag_val);
+            if(translate_name(newInfo,newInfo->url,newInfo->filename) 
+	       != A_STD_DOCUMENT) {
+                rprintf(reqInfo,"%s",error);
+		sprintf(errstr,"unable to include %s in parsed file %s, non standard document",newInfo->filename, reqInfo->filename);
+                log_error(errstr,reqInfo->hostInfo->error_log);
+            } else {
+		if(send_included_file(newInfo,reqInfo->filename)) {
+                  sprintf(errstr,"unable to include %s in parsed file %s",
+                        newInfo->filename, reqInfo->filename);
+                  log_error(errstr,reqInfo->hostInfo->error_log);
+                  rprintf(reqInfo,"%s",error);
+                }
+	        reqInfo->bytes_sent += newInfo->bytes_sent;
+	    }
+	    free_request(newInfo,ONLY_LAST);
         } 
-        else if(!strcmp(tag,"done"))
+        else if(!strcmp(tag,"done")) {
+	    freeString(tag);
+	    freeString(errstr);
             return 0;
+	}
         else {
-            sprintf(errstr,"unknown parameter %s to tag echo in %s",tag,fn);
-            log_error_noclose(errstr);
-            bytes_sent += fprintf(out,"%s",error);
+            sprintf(errstr,"unknown parameter %s to tag echo in %s",tag,
+		    reqInfo->filename);
+            log_error(errstr,reqInfo->hostInfo->error_log);
+            rprintf(reqInfo,"%s",error);
         }
     }
 }
 
-int handle_echo(FILE *in, FILE *out, char *file, char *error, char **env) {
-    char tag[MAX_STRING_LEN];
+#ifndef NO_YOW
+#include "httpy.h"
+
+void print_yow(per_request *reqInfo, int yow_num) {
+  int i = 0;
+  int href_on = FALSE;
+  int tmp;
+
+  if (yow_num >= MAX_YOW) yow_num = MAX_YOW-1;
+  while (yow_lines[yow_num][i]) {
+    rputc(yow_lines[yow_num][i],reqInfo);
+    if (yow_lines[yow_num][i] == ' ') {
+      tmp = href_on;
+      href_on = (rand() % 100 < 50) ? 1 : 0;
+      if (tmp != href_on) {
+	if (!tmp) 
+	  rprintf(reqInfo,"<A HREF=\"%s\">", reqInfo->url);
+	 else 
+	  rprintf(reqInfo,"</A>");
+      }
+      i++;
+      while ((yow_lines[yow_num][i] == ' ') && yow_lines[yow_num][i++]);
+      i--;
+
+    }
+    (reqInfo->bytes_sent)++;
+    i++;
+  }
+  if (href_on) {
+    rprintf(reqInfo,"</A>");
+  }
+}
+ 
+#endif /* NO_YOW */
+  
+int handle_echo(per_request *reqInfo, FILE *fp, char *error) {
+    char *tag;
     char *tag_val;
 
+    tag = newString(MAX_STRING_LEN,STR_TMP);
+
     while(1) {
-        if(!(tag_val = get_tag(in,tag)))
+        if(!(tag_val = get_tag(fp,tag))) {
+	    freeString(tag);
             return 1;
+        }
         if(!strcmp(tag,"var")) {
             int x,i,len;
 
 	    len = strlen(tag_val); 
-            for(x=0;env[x] != NULL; x++) {
-                i = ind(env[x],'=');
-                if((i == len) && !(strncmp(env[x],tag_val,i))) {
-                    bytes_sent += fprintf(out,"%s",&env[x][i+1]);
+            for(x=0;reqInfo->env[x] != NULL; x++) {
+                i = ind(reqInfo->env[x],'=');
+                if((i == len) && !(strncmp(reqInfo->env[x],tag_val,i))) {
+                    rprintf(reqInfo,"%s",&(reqInfo->env[x][i+1]));
                     break;
                 }
             }
-            if(!env[x]) bytes_sent += fprintf(out,"(none)");
-        } else if(!strcmp(tag,"done"))
+            if(!(reqInfo->env[x])) 
+	      rprintf(reqInfo,"(none)");
+        }
+#ifndef NO_YOW
+	else if(!strcmp(tag,"yow")) {
+	   int num = atoi(tag_val);
+	   print_yow(reqInfo,num);
+        }
+#endif /* NO_YOW */
+        else if(!strcmp(tag,"done")) {
+	    freeString(tag);
             return 0;
+	} 
         else {
-            char errstr[MAX_STRING_LEN];
-            sprintf(errstr,"unknown parameter %s to tag echo in %s",tag,file);
-            log_error_noclose(errstr);
-            bytes_sent += fprintf(out,"%s",error);
+            char *errstr;
+
+	    errstr = newString(MAX_STRING_LEN,STR_TMP);
+
+            sprintf(errstr,"unknown parameter %s to tag echo in %s",tag,
+		    reqInfo->filename);
+            log_error(errstr,reqInfo->hostInfo->error_log);
+            rprintf(reqInfo,"%s",error);
+
+	    freeString(errstr);
         }
     }
 }
 
-int include_cgi(char *s, char *pargs, char *args, char **env, FILE *out) 
-{
-    char op,d[HUGE_STRING_LEN];
+int include_cgi(per_request *reqInfo) {
+    char op;
     int allow,check_cgiopt;
     struct stat finfo;
 
-    getparents(s);
-    if(s[0] == '/') {
-        strcpy(d,s);
-        if(translate_name(d,out) != SCRIPT_CGI)
+    getparents(reqInfo->url);
+    if(reqInfo->url[0] == '/') {
+        if(translate_name(reqInfo,reqInfo->url,reqInfo->filename) 
+	   != A_SCRIPT_CGI) 
             return -1;
         check_cgiopt=0;
     } else {
-        char dir[MAX_STRING_LEN];
-        getwd(dir);
-        make_full_path(dir,s,d);
+        char *dir;
+	dir = newString(MAX_STRING_LEN, STR_TMP);
+        getcwd(dir,MAX_STRING_LEN);
+        make_full_path(dir,reqInfo->url,reqInfo->filename);
         check_cgiopt=1;
+	freeString(dir);
     }
     /* No hardwired path info or query allowed */
-    if(stat(d,&finfo) == -1)
+    if(stat(reqInfo->filename,&finfo) == -1)
         return -1;
 
-    evaluate_access(d,&finfo,M_GET,&allow,&op,out);
+    /* evaluate access */
+    evaluate_access(reqInfo,&finfo,&allow,&op);
     if((!allow) || (check_cgiopt && (!(op & OPT_EXECCGI))))
         return -1;
 
-    if(cgi_stub("GET",d,pargs,args,env,&finfo,-1,out) == REDIRECT_URL)
-        bytes_sent += fprintf(out,"<A HREF=\"%s\">%s</A>",location,location);
+    if(cgi_stub(reqInfo,&finfo,op) == SC_REDIRECT_TEMP)
+        rprintf(reqInfo, "<A HREF=\"%s\">%s</A>",reqInfo->outh_location,
+			      reqInfo->outh_location);
     return 0;
 }
 
 static int ipid;
-void kill_include_child() {
-    char errstr[MAX_STRING_LEN];
+void kill_include_child(void) {
+    char *errstr;
+
+    errstr = newString(MAX_STRING_LEN,STR_TMP);
+
     sprintf(errstr,"killing command process %d",ipid);
-    log_error_noclose(errstr);
+    log_error(errstr,gCurrentRequest->hostInfo->error_log);
     kill(ipid,SIGKILL);
     waitpid(ipid,NULL,0);
+
+    freeString(errstr);
 }
 
-int include_cmd(char *s, char *pargs, char *args, char **env, FILE *out) {
-    int p[2],x;
-    FILE *f;
+int include_cmd(per_request *reqInfo, char *s) {
+    int p[2];
 
-    if(pipe(p) == -1)
-        die(SERVER_ERROR,"httpd: could not create IPC pipe",out);
-    if((ipid = fork()) == -1)
-        die(SERVER_ERROR,"httpd: could not fork new process",out);
+    if(Pipe(p) == -1)
+        die(reqInfo,SC_SERVER_ERROR,"HTTPd: could not create IPC pipe");
+    if((ipid = fork()) == -1) {
+	Close(p[0]);
+	Close(p[1]);
+        die(reqInfo,SC_SERVER_ERROR,"HTTPd: could not fork new process");
+    }
     if(!ipid) {
         char *argv0;
 
-        if(pargs[0] || args[0]) {
-            if(!(in_headers_env = new_env(in_headers_env,4,&x)))
-                return -1;
-            if(pargs[0]) {
-                char p2[HUGE_STRING_LEN];
+        if(reqInfo->path_info[0] || reqInfo->args[0]) {
+            if(reqInfo->path_info[0]) {
+                char *p2;
                 
-                escape_shell_cmd(pargs);
-                in_headers_env[x++] = make_env_str("PATH_INFO",pargs,out);
-                strcpy(p2,pargs);
-                translate_name(p2,out);
-                in_headers_env[x++] = make_env_str("PATH_TRANSLATED",p2,out);
+		p2 = newString(HUGE_STRING_LEN,STR_TMP);
+
+                escape_shell_cmd(reqInfo->path_info);
+                make_env_str(reqInfo,"PATH_INFO",reqInfo->path_info);
+                translate_name(reqInfo,reqInfo->path_info,p2);
+                make_env_str(reqInfo,"PATH_TRANSLATED",p2);
+
+		freeString(p2);
             }
-            if(args[0]) {
-                in_headers_env[x++] = make_env_str("QUERY_STRING",args,out);
-                unescape_url(args);
-                escape_shell_cmd(args);
-                in_headers_env[x++] = make_env_str("QUERY_STRING_UNESCAPED",args,out);
+            if(reqInfo->args[0]) {
+                make_env_str(reqInfo,"QUERY_STRING",reqInfo->args);
+                unescape_url(reqInfo->args);
+                escape_shell_cmd(reqInfo->args);
+                make_env_str(reqInfo,"QUERY_STRING_UNESCAPED",reqInfo->args);
             }
-            in_headers_env[x] = NULL;
         }
 
-        close(p[0]);
+        Close(p[0]);
         if(p[1] != STDOUT_FILENO) {
             dup2(p[1],STDOUT_FILENO);
-            close(p[1]);
+            Close(p[1]);
         }
-        error_log2stderr();
+	close(reqInfo->in);
+	close(reqInfo->connection_socket);
+        error_log2stderr(reqInfo->hostInfo->error_log);
         if(!(argv0 = strrchr(SHELL_PATH,'/')))
             argv0=SHELL_PATH;
-        if(execle(SHELL_PATH,argv0,"-c",s,(char *)0,in_headers_env) == -1) {
-            fprintf(stderr,"httpd: exec of %s failed, errno is %d\n",
+        if(execle(SHELL_PATH,argv0,"-c",s,(char *)0,reqInfo->env) == -1) {
+            fprintf(stderr,"HTTPd: exec of %s failed, errno is %d\n",
                     SHELL_PATH,errno);
             exit(1);
         }
     }
-    close(p[1]);
-    if(!(f=fdopen(p[0],"r"))) {
-        waitpid(ipid,NULL,0);
-        return -1;
-    }
-    send_fd(f,out,kill_include_child);
-    fclose(f);
+    Close(p[1]);
+    send_fd(reqInfo,p[0],kill_include_child);
+    Close(p[0]);
     waitpid(ipid,NULL,0);
     return 0;
 }
 
 
-int handle_exec(FILE *in, FILE *out, char *file, char *path_args, char *args,
-                char *error, char **env)
+int handle_exec(per_request *reqInfo, FILE *fp, char *error)
 {
-    char tag[MAX_STRING_LEN],errstr[MAX_STRING_LEN];
+    char *tag,*errstr;
     char *tag_val;
 
+    tag = newString(MAX_STRING_LEN,STR_TMP);
+    errstr = newString(MAX_STRING_LEN,STR_TMP);
+
     while(1) {
-        if(!(tag_val = get_tag(in,tag)))
+        if(!(tag_val = get_tag(fp,tag))) {
+	    freeString(tag);
+	    freeString(errstr);
             return 1;
+        }
         if(!strcmp(tag,"cmd")) {
-            if(include_cmd(tag_val,path_args,args,env,out) == -1) {
-                sprintf(errstr,"invalid command exec %s in %s",tag_val,file);
-                log_error_noclose(errstr);
-                bytes_sent += fprintf(out,"%s",error);
+            if(include_cmd(reqInfo,tag_val) == -1) {
+                sprintf(errstr,"invalid command exec %s in %s",tag_val,
+			reqInfo->filename);
+                log_error(errstr,reqInfo->hostInfo->error_log);
+                rprintf(reqInfo,"%s",error);
             }
             /* just in case some stooge changed directories */
-            chdir_file(file);
+            chdir_file(reqInfo->filename);
         } 
         else if(!strcmp(tag,"cgi")) {
-            if(include_cgi(tag_val,path_args,args,env,out) == -1) {
-                sprintf(errstr,"invalid CGI ref %s in %s",tag_val,file);
-                log_error_noclose(errstr);
-                bytes_sent += fprintf(out,"%s",error);
+	    per_request *newInfo;
+	    newInfo = continue_request(reqInfo, KEEP_ENV | KEEP_AUTH);
+	    newInfo->http_version = P_HTTP_0_9;
+	    strcpy(newInfo->url,tag_val);
+	    
+            if(include_cgi(newInfo) == -1) {
+                sprintf(errstr,"invalid CGI ref %s in %s",newInfo->filename,
+			reqInfo->filename);
+                log_error(errstr,reqInfo->hostInfo->error_log);
+                rprintf(reqInfo,"%s",error);
             }
+	    reqInfo->bytes_sent += newInfo->bytes_sent;
+	    free_request(newInfo,ONLY_LAST);
             /* grumble groan */
-            chdir_file(file);
+            chdir_file(reqInfo->filename);
         }
-        else if(!strcmp(tag,"done"))
+        else if(!strcmp(tag,"done")) {
+	    freeString(errstr);
+	    freeString(tag);
             return 0;
+        }
         else {
-            char errstr[MAX_STRING_LEN];
-            sprintf(errstr,"unknown parameter %s to tag echo in %s",tag,file);
-            log_error_noclose(errstr);
-            bytes_sent += fprintf(out,"%s",error);
+            sprintf(errstr,"unknown parameter %s to tag echo in %s",tag,
+		    reqInfo->filename);
+            log_error(errstr,reqInfo->hostInfo->error_log);
+            rprintf(reqInfo,"%s",error);
         }
     }
 
 }
 
-int handle_config(FILE *in, FILE *out, char *file, char *error, char *tf,
-                  int *sizefmt, char **env) {
-    char tag[MAX_STRING_LEN];
+int handle_config(per_request *reqInfo, FILE *fp, char *error, 
+		  char *tf, int *sizefmt) {
+    char *tag;
     char *tag_val;
 
+    tag = newString(MAX_STRING_LEN,STR_TMP);
+
     while(1) {
-        if(!(tag_val = get_tag(in,tag)))
+        if(!(tag_val = get_tag(fp,tag))) {
+	    freeString(tag);
             return 1;
+        }
         if(!strcmp(tag,"errmsg"))
             strcpy(error,tag_val);
         else if(!strcmp(tag,"timefmt")) {
             strcpy(tf,tag_val);
             /* Replace DATE* and LAST_MODIFIED (they should be first) */
-	    replace_env_str(in_headers_env, "DATE_LOCAL", ht_time(date,tf,0), out);
-	    replace_env_str(in_headers_env, "DATE_GMT", ht_time(date,tf,1), out);
-	    replace_env_str(in_headers_env, "LAST_MODIFIED", ht_time(lm,tf,0), out);
+	    replace_env_str(reqInfo, "DATE_LOCAL", ht_time(date,tf,0));
+	    replace_env_str(reqInfo, "DATE_GMT", ht_time(date,tf,1));
+	    replace_env_str(reqInfo, "LAST_MODIFIED", ht_time(lm,tf,0));
         }
         else if(!strcmp(tag,"sizefmt")) {
             if(!strcmp(tag_val,"bytes"))
                 *sizefmt = SIZEFMT_BYTES;
             else if(!strcmp(tag_val,"abbrev"))
                 *sizefmt = SIZEFMT_KMG;
-        } 
-        else if(!strcmp(tag,"done"))
+        }  
+        else if(!strcmp(tag,"done")) {
+	    freeString(tag);
             return 0;
+        }
         else {
-            char errstr[MAX_STRING_LEN];
+            char *errstr;
+
+	    errstr = newString(MAX_STRING_LEN,STR_TMP);
+
             sprintf(errstr,"unknown parameter %s to tag config in %s",
-                    tag,file);
-            log_error_noclose(errstr);
-            bytes_sent += fprintf(out,"%s",error);
+                    tag, reqInfo->filename);
+            log_error(errstr,reqInfo->hostInfo->error_log);
+            rprintf(reqInfo,"%s",error);
+
+	    freeString(errstr);
         }
     }
 }
 
+#ifndef NO_YOW
+int handle_yow(per_request *reqInfo, FILE *fp, char *error) {
+    char *tag;
+    char c;
+
+    tag = newString(MAX_STRING_LEN,STR_TMP);
+
+    srand((int) (getpid() + time((long *) 0)));  
+    GET_CHAR(fp,c,1);
+    if (c == ENDING_SEQUENCE[0]) {
+        GET_CHAR(fp,c,1);
+        if (c == ENDING_SEQUENCE[1]) {
+	    GET_CHAR(fp,c,1);
+	    if (c == ENDING_SEQUENCE[2]) {
+		print_yow(reqInfo,rand() % MAX_YOW);
+		freeString(tag);
+                return 0;
+            } else {
+		freeString(tag);
+		return 1;
+            }
+        } else {
+	    freeString(tag);
+	    return 1;
+        }
+    } else {
+	freeString(tag);
+	return 1;
+    }
+}
+#endif /* NO_YOW */
 
 
-int find_file(FILE *out, char *file, char *directive, char *tag, 
+
+int find_file(per_request *reqInfo, char *directive, char *tag, 
               char *tag_val, struct stat *finfo, char *error)
 {
-    char errstr[MAX_STRING_LEN], dir[MAX_STRING_LEN], to_send[MAX_STRING_LEN];
+    char *errstr, *dir, *to_send;
+
+    errstr = newString(MAX_STRING_LEN,STR_TMP);
+    dir = newString(MAX_STRING_LEN,STR_TMP);
+    to_send = newString(MAX_STRING_LEN,STR_TMP);
 
     if(!strcmp(tag,"file")) {
         getparents(tag_val); /* get rid of any nasties */
-        getwd(dir);
+        getcwd(dir,MAX_STRING_LEN);
         make_full_path(dir,tag_val,to_send);
         if(stat(to_send,finfo) == -1) {
             sprintf(errstr,
                     "unable to get information about %s in parsed file %s",
-                    to_send,file);
-            log_error_noclose(errstr);
-            bytes_sent += fprintf(out,"%s",error);
+                    to_send,reqInfo->filename);
+            log_error(errstr,reqInfo->hostInfo->error_log);
+            rprintf(reqInfo,"%s",error);
+	    freeString(errstr);
+	    freeString(dir);
+	    freeString(to_send);
             return -1;
         }
+	freeString(errstr);
+	freeString(dir);
+	freeString(to_send);
         return 0;
     }
     else if(!strcmp(tag,"virtual")) {
-        if(translate_name(tag_val,out) != STD_DOCUMENT) {
-            bytes_sent += fprintf(out,"%s",error);
-            log_error_noclose(errstr);
+	per_request *newInfo;
+	newInfo = continue_request(reqInfo, KEEP_ENV | KEEP_AUTH);
+	newInfo->http_version = P_HTTP_0_9;
+        strcpy(newInfo->url,tag_val);
+        if(translate_name(newInfo,newInfo->url,newInfo->filename) 
+	   != A_STD_DOCUMENT) {
+	   sprintf(errstr,"unable to get information about non standard file %s in parsed file %s",newInfo->filename,reqInfo->filename);
+            rprintf(reqInfo,"%s",error);
+            log_error(errstr,reqInfo->hostInfo->error_log);
         }  
-        else if(stat(tag_val,finfo) == -1) {
+        else if(stat(newInfo->filename,finfo) == -1) {
             sprintf(errstr,
                     "unable to get information about %s in parsed file %s",
-                    to_send,file);
-            log_error_noclose(errstr);
-            bytes_sent += fprintf(out,"%s",error);
+                    newInfo->filename,reqInfo->filename);
+            log_error(errstr,reqInfo->hostInfo->error_log);
+            rprintf(reqInfo,"%s",error);
+	    free_request(newInfo,ONLY_LAST); 
+	    freeString(errstr);
+	    freeString(dir);
+	    freeString(to_send);
             return -1;
         }
+	free_request(newInfo,ONLY_LAST);
+	freeString(errstr);
+	freeString(dir);
+	freeString(to_send);
         return 0;
     }
     else {
         sprintf(errstr,"unknown parameter %s to tag %s in %s",
-                tag,directive,file);
-        log_error_noclose(errstr);
-        bytes_sent += fprintf(out,"%s",error);
+                tag,directive,reqInfo->filename);
+        log_error(errstr,reqInfo->hostInfo->error_log);
+        rprintf(reqInfo,"%s",error);
+	freeString(errstr);
+	freeString(dir);
+	freeString(to_send);
         return -1;
     }
 }
 
 
-int handle_fsize(FILE *in, FILE *out, char *file, char *error, int sizefmt) 
+int handle_fsize(per_request *reqInfo, FILE *fp, char *error, int sizefmt)
 {
-    char tag[MAX_STRING_LEN];
+    char *tag;
     char *tag_val;
     struct stat finfo;
 
+    tag = newString(MAX_STRING_LEN,STR_TMP);
+
     while(1) {
-        if(!(tag_val = get_tag(in,tag)))
+        if(!(tag_val = get_tag(fp,tag))) {
+	    freeString(tag);
             return 1;
-        else if(!strcmp(tag,"done"))
+        }
+        else if(!strcmp(tag,"done")) {
+	    freeString(tag);
             return 0;
-        else if(!find_file(out,file,"fsize",tag,tag_val,&finfo,error)) {
+        }
+        else if(!find_file(reqInfo,"fsize",tag,tag_val,&finfo,error)) {
             if(sizefmt == SIZEFMT_KMG) {
-                send_size(finfo.st_size,out);
-                bytes_sent += 5;
+                send_size(reqInfo,finfo.st_size);
+                reqInfo->bytes_sent += 5;
             }
             else {
                 int l,x;
-                sprintf(tag,"%ld",finfo.st_size);
+                sprintf(tag,"%ld",(long)finfo.st_size);
                 l = strlen(tag); /* grrr */
                 for(x=0;x<l;x++) {
                     if(x && (!((l-x) % 3))) {
-                        fputc(',',out);
-                        ++bytes_sent;
+                        rputc(',',reqInfo);
                     }
-                    fputc(tag[x],out);
-                    ++bytes_sent;
+                    rputc(tag[x],reqInfo);
                 }
             }
         }
     }
 }
 
-int handle_flastmod(FILE *in, FILE *out, char *file, char *error, char *tf) 
+int handle_flastmod(per_request *reqInfo, FILE *fp, char *error, char *tf)
 {
-    char tag[MAX_STRING_LEN];
+    char *tag;
     char *tag_val;
     struct stat finfo;
 
+    tag = newString(MAX_STRING_LEN,STR_TMP);
+
     while(1) {
-        if(!(tag_val = get_tag(in,tag)))
+        if(!(tag_val = get_tag(fp,tag))) {
+	    freeString(tag);
             return 1;
-        else if(!strcmp(tag,"done"))
+        }
+        else if(!strcmp(tag,"done")) {
+	    freeString(tag);
             return 0;
-        else if(!find_file(out,file,"flastmod",tag,tag_val,&finfo,error))
-            bytes_sent += fprintf(out,"%s",ht_time(finfo.st_mtime,tf,0));
+        }
+        else if(!find_file(reqInfo,"flastmod",tag,tag_val,&finfo,error))
+            rprintf(reqInfo,"%s", ht_time(finfo.st_mtime,tf,0));
     }
 }    
-
 
 
 /* -------------------------- The main function --------------------------- */
 
 /* This is a stub which parses a file descriptor. */
 
-void send_parsed_content(char *file, FILE *f, FILE *fd, 
-                         char *path_args, char *args,
-                         char **env,int noexec)
+void send_parsed_content(per_request *reqInfo, FILE *fp, int noexec)
 {
-    char directive[MAX_STRING_LEN], error[MAX_STRING_LEN];
-    char timefmt[MAX_STRING_LEN], errstr[MAX_STRING_LEN];
+    char *directive, *error, *timefmt, *errstr;
     int ret, sizefmt;
+
+    directive = newString(MAX_STRING_LEN,STR_TMP);
+    error = newString(MAX_STRING_LEN,STR_TMP);
+    timefmt = newString(MAX_STRING_LEN,STR_TMP);
+    errstr = newString(MAX_STRING_LEN,STR_TMP);
 
     strcpy(error,DEFAULT_ERROR_MSG);
     strcpy(timefmt,DEFAULT_TIME_FORMAT);
     sizefmt = SIZEFMT_KMG;
 
-    chdir_file(file);
+    chdir_file(reqInfo->filename);
 
     while(1) {
-        if(!find_string(f,STARTING_SEQUENCE,fd)) {
-            if(get_directive(f,directive))
+        if(!find_string(reqInfo,fp,STARTING_SEQUENCE)) {
+            if(get_directive(fp,directive)) {
+		freeString(directive);
+		freeString(error);
+		freeString(timefmt);
+		freeString(errstr);
                 return;
+            }
             if(!strcmp(directive,"exec")) {
                 if(noexec) {
-                    sprintf(errstr,"httpd: exec used but not allowed in %s",
-                            file);
-                    log_error_noclose(errstr);
-                    bytes_sent += fprintf(fd,"%s",error);
-                    ret = find_string(f,ENDING_SEQUENCE,NULL);
+                    sprintf(errstr,"HTTPd: exec used but not allowed in %s",
+                            reqInfo->filename);
+                    log_error(errstr,reqInfo->hostInfo->error_log);
+                    rprintf(reqInfo,"%s",error);
+                    ret = find_string(reqInfo,fp,ENDING_SEQUENCE);
                 } else 
-                    ret=handle_exec(f,fd,file,path_args,args,error,env);
+                    ret=handle_exec(reqInfo,fp,error);
             } 
             else if(!strcmp(directive,"config"))
-                ret=handle_config(f,fd,file,error,timefmt,&sizefmt,env);
-            else if(!strcmp(directive,"include"))
-                ret=handle_include(f,fd,file,env,error);
+                ret=handle_config(reqInfo,fp,error,timefmt,&sizefmt);
+            else if(!strcmp(directive,"include")) 
+                ret=handle_include(reqInfo,fp,error);
             else if(!strcmp(directive,"echo"))
-                ret=handle_echo(f,fd,file,error,env);
+                ret=handle_echo(reqInfo,fp,error);
             else if(!strcmp(directive,"fsize"))
-                ret=handle_fsize(f,fd,file,error,sizefmt);
+                ret=handle_fsize(reqInfo,fp,error,sizefmt);
             else if(!strcmp(directive,"flastmod"))
-                ret=handle_flastmod(f,fd,file,error,timefmt);
+                ret=handle_flastmod(reqInfo,fp,error,timefmt);
+#ifndef NO_YOW
+	    else if(!strcmp(directive,"yow"))
+		ret=handle_yow(reqInfo,fp,error);
+#endif /* NO_YOW */
             else {
-                sprintf(errstr,"httpd: unknown directive %s in parsed doc %s",
-                        directive,file);
-                log_error_noclose(errstr);
-                bytes_sent += fprintf(fd,"%s",error);
-                ret=find_string(f,ENDING_SEQUENCE,NULL);
+                sprintf(errstr,"HTTPd: unknown directive %s in parsed doc %s",
+                        directive,reqInfo->filename);
+                log_error(errstr,reqInfo->hostInfo->error_log);
+                rprintf(reqInfo,"%s",error);
+                ret=find_string(reqInfo,fp,ENDING_SEQUENCE);
             }
             if(ret) {
-                sprintf(errstr,"httpd: premature EOF in parsed file %s",file);
-                log_error_noclose(errstr);
+                sprintf(errstr,"HTTPd: premature EOF in parsed file %s",
+			reqInfo->filename);
+                log_error(errstr,reqInfo->hostInfo->error_log);
+		freeString(directive);
+		freeString(error);
+		freeString(timefmt);
+		freeString(errstr);
                 return;
             }
-        } else 
+        } else {
+	    freeString(directive);
+	    freeString(error);
+	    freeString(timefmt);
+	    freeString(errstr);
             return;
+        }
     }
 }
 
 /* Called by send_file */
 
-void send_parsed_file(char *file, FILE *fd, char *path_args, char *args,
-                      int noexec) 
+void send_parsed_file(per_request *reqInfo, int noexec) 
 {
-    FILE *f;
+    FILE *fp;
 
-    if(!(f=fopen(file,"r"))) {
-        log_reason("file permissions deny server access",file);
-        unmunge_name(file);
-        die(FORBIDDEN,file,fd);
+    if(!(fp=FOpen(reqInfo->filename,"r"))) {
+        log_reason(reqInfo,"file permissions deny server access",
+		   reqInfo->filename);
+        /* unmunge_name(reqInfo,reqInfo->filename); */
+        die(reqInfo,SC_FORBIDDEN,reqInfo->url);
     }
-    strcpy(content_type,"text/html");
-    if(!assbackwards)
-        send_http_header(fd);
-    if(header_only) {
-	fclose(f);
+    strcpy(reqInfo->outh_content_type,"text/html");
+    if(reqInfo->http_version != P_HTTP_0_9)
+        send_http_header(reqInfo);
+    if(reqInfo->method == M_HEAD) {
+	FClose(fp);
         return;
     }
 
     /* Make sure no children inherit our buffers */
-    fflush(fd);
-    assbackwards = 1; /* make sure no headers get inserted anymore */
+    rflush(reqInfo);
     alarm(timeout);
 
-    in_headers_env = add_include_vars(in_headers_env,file,path_args,args,
-                           DEFAULT_TIME_FORMAT,fd);
+    add_include_vars(reqInfo,DEFAULT_TIME_FORMAT);
 
-    in_headers_env = add_common_vars(in_headers_env,fd);
+    add_common_vars(reqInfo);
 
-    send_parsed_content(file,f,fd,path_args,args,in_headers_env,noexec);
-    free_env(in_headers_env);
-    in_headers_env = NULL;
+    send_parsed_content(reqInfo,fp,noexec);
+    FClose(fp);
 }

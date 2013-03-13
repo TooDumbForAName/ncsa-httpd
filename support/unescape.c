@@ -5,7 +5,14 @@
  * 
  */
 
+#include "config.h"
+#include "portability.h"
+
 #include <stdio.h>
+#include <string.h>
+#ifndef NO_STDLIB_H
+# include <stdlib.h>
+#endif /* NO_STDLIB_H */
 
 void plustospace(char *str) {
     register int x;

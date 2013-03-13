@@ -1,27 +1,37 @@
+#===========================================================================
+# NCSA HTTPd (comments, questions to httpd@ncsa.uiuc.edu)
+#===========================================================================
 # This is the main server configuration file. It is best to 
 # leave the directives in this file in the order they are in, or
 # things may not go the way you'd like. See URL http://hoohoo.ncsa.uiuc.edu/
 # for instructions.
-
 # Do NOT simply read the instructions in here without understanding
 # what they do, if you are unsure consult the online docs. You have been
-# warned.  
+# warned.
+# Thanks to A. P. Harris for some of the organization and explanations
+# contained here-in.
+#===========================================================================
 
-# NCSA httpd (comments, questions to httpd@ncsa.uiuc.edu)
-
+#===========================================================================
+# Server Operation
+#---------------------------------------------------------------------------
 # ServerType is either inetd, or standalone.
+# Set to 'inetd' to run from inetd, or 'standalone', to run as a daemon.
+# Default: standalone
 
 ServerType standalone
 
 # If you are running from inetd, go to "ServerAdmin".
 
 # Port: The port the standalone listens to. For ports < 1023, you will
-# need httpd to be run as root initially.
+# need HTTPd to be run as root initially.
+# Default: 80 (or DEFAULT_PORT)
 
 Port 80
 
 # StartServers: The number of servers to launch at startup.  Must be
 # compiled without the NO_PASS compile option
+# Default: 5 (or DEFAULT_START_DAEMON)
 
 StartServers 5
 
@@ -29,24 +39,72 @@ StartServers 5
 # scheme (new server for each connection).  These servers will stay around
 # until the server is restarted.  They will be reused as needed, however.
 # See the documentation on hoohoo.ncsa.uiuc.edu for more information.
+# If compile option RESOURCE_LIMIT is used, HTTPd will not mimic the 1.3
+# behavior, and MaxServers will be the maximum number of servers possible.
+# Default: 10 (or DEFAULT_MAX_DAEMON)
 
 MaxServers 20
 
-# If you wish httpd to run as a different user or group, you must run
-# httpd as root initially and it will switch.  
+## TimeOut <seconds>
+# The number of seconds the server will wait for a client to
+# send its query once connected, or the maximum amount of time the
+# server will spend waiting for a client to accept information.
+# Default: 1200 (or DEFAULT_TIMEOUT)
 
-# User/Group: The name (or #number) of the user/group to run httpd as.
+TimeOut 1200
+
+# If you wish HTTPd to run as a different user or group, you must run
+# HTTPd as root initially and it will switch.  
+# User/Group: The name (or #number) of the user/group to run HTTPd as.
+# Default: #-1 (or DEFAULT_USER / DEFAULT_GROUP)
 
 User nobody
 Group #-1
 
+# IdentityCheck: Enables or disables RFC931 compliant logging of the 
+# remote user name for sites which run identd or something similar. 
+# This information is logged in the access_log.  Note that it 
+# *will* hurt responsiveness considerably, especially for non-unix clients.
+# Default: off (or DEFAULT_RFC931)
+
+#IdentityCheck On
+
+# AssumeDigestSupport: Whether it's safe to assume that clients support 
+# md5 digesting.
+# Default: off
+
+#AssumeDigestSupport On
+
+#===========================================================================
+# Server Customization
+#---------------------------------------------------------------------------
+# ServerName allows you to set a host name which is sent back to clients for
+# your server if it's different than the one the program would get (i.e. use
+# "www" instead of the host's real name).
+#
+# Note: You cannot just invent host names and hope they work. The name you 
+# define here must be a valid DNS name for your host. If you don't understand
+# this, ask your network administrator.
+# Valid with <VirtualHost>
+# Default: If you do not specify a ServerName, HTTPd attempts to retrieve
+#	   it through system calls.
+
+#ServerName new.host.name
+
 # ServerAdmin: Your address, where problems with the server should be
 # e-mailed.
+# Valid within <VirtualHost>
+# Default: <none> (or DEFAULT_ADMIN)
 
 ServerAdmin you@your.address
 
+#===========================================================================
+# File Locations
+#---------------------------------------------------------------------------
 # ServerRoot: The directory the server's config, error, and log files
-# are kept in
+# are kept.
+# Note: All other paths will use this as a prefix if they don't start with /
+# Default: /usr/local/etc/httpd (or HTTPD_ROOT)
 
 ServerRoot /usr/local/etc/httpd
 
@@ -70,22 +128,134 @@ AgentLog logs/agent_log
 
 RefererLog logs/referer_log
 
+# PidFile: The file the server should log its pid to
+PidFile logs/httpd.pid
+
+# AccessConfig: The location of the access configuration file
+# Default: conf/access.conf (or ACCESS_CONFIG_FILE)
+
+AccessConfig conf/access.conf
+
+# TypesConfig: The location of the typing configuration file, which
+# maps filename extensions to MIME types.
+# Default: conf/mime.types (or TYPES_CONFIG_FILE)
+
+#TypesConfig /usr/local/lib/mime.types
+
+# CoreDirectory:  where to dump core.
+# Default: SERVER_ROOT
+
+#CoreDirectory /tmp
+
+
+#===========================================================================
+# Logging Directives
+#---------------------------------------------------------------------------
+# LogOptions: This determines the type of log file you are using,
+# Valid options currently are:
+# 	Combined for CLF with Referer and UserAgent tagged on
+#	Separate for CLF in one file and Referer and UserAgent in separate files
+#	Servername for CLF + ServerName 
+#	Date for Referer and UserAgent logs with same date stamp as access_log
+
+LogOptions Separate
+
+# LogDirGroupWriteOk, LogDirOtherWriteOk: Define either of these if you 
+# want the server to start even if you have write permissions on the log
+# directory.  Having write permissions set is a potential security hole.
+# Only makes a difference if the server process is started by root.
+
+#LogDirGroupWriteOk
+#LogDirOtherWriteOk
+
 # RefererIgnore: If you don't want to keep track of links from certain
 # servers (like your own), place it here.  If you want to log them all,
 # keep this line commented.
 
 #RefererIgnore servername
 
-# PidFile: The file the server should log its pid to
-PidFile logs/httpd.pid
+# DNSMode allows you to control the amount of DNS activity the server will
+# perform.  The default is Standard, which means it does a single lookup
+# on every request.  Minimum means the server will only do a lookup if 
+# necessary to fulfill a domain restriction.  Maximum means the server
+# will do two lookups per request.  This will be slow, and not necessarily
+# that much better security.  None will keep the server from doing any
+# DNS resolution.  Maximum is the same as the old MAXIMUM_DNS compile option,
+# and none is the same as the old MINIMUM_DNS option.
+# Default: Standard
 
-# ServerName allows you to set a host name which is sent back to clients for
-# your server if it's different than the one the program would get (i.e. use
-# "www" instead of the host's real name).
-#
-# Note: You cannot just invent host names and hope they work. The name you 
-# define here must be a valid DNS name for your host. If you don't understand
-# this, ask your network administrator.
+DNSMode Standard
 
-#ServerName new.host.name
+#===========================================================================
+# KeepAlive Directives
+#---------------------------------------------------------------------------
+# The directives below configure keepalive, the ability of the server
+# to maintain a persistent connection with a client at the client's
+# request
+
+# The following line turns keepalive on. The default is off, so
+# you can omit this line, or change 'on' to 'off'
+
+# KeepAlive on
+
+# The following line specifies the timeout in seconds of the 
+# persistent connection. If the client fails to issue another
+# request on the socket within this window, the connection is closed
+
+# KeepAliveTimeout 10
+
+# The following line specifies the maximum number of requests
+# that will be accepted on the persistent connection. If it
+# is set to 0, then there will be no maximum.
+# Default: 
+
+# MaxKeepAliveRequests 0
+
+#===========================================================================
+# Misc Options
+#---------------------------------------------------------------------------
+
+#ProcessName: This is the prefix for the process name if compiled with
+# SETPROCTITLE.
+# Default: HTTPd
+
+#ProcessName WebServer
+
+#Annotation-Server: Name of our annotation server.  This will send back
+# an Annotation: header with requests to denote where the annotation server
+# is located.
+#Default: None
+
+
+#===========================================================================
+# VirtualHost
+#---------------------------------------------------------------------------
+# VirtualHosting is the ability to respond differently to different IP
+# addresses.  It can be implemented either by having a single server respond
+# to all, or by having a different server respond to each (the Unix(tm) OS
+# setup precludes responding to some)  Every effort has been made to allow
+# a single server respond to all as effectively as possible, as this is
+# more resource efficient.  There are something which still aren't possible
+# in that configuration, however.
+
+# BindAddress: A '*', IP number, or host name.  Binds the server to a 
+# specific IP address.  * is all IP addresses.  Should not be used in
+# conjunction with <VirtualHost>
+# Default: *
+
+#BindAddress 127.0.0.1
+
+# VirtualHost allows you to look differently depending on the hostname you
+# are called by.  The parameter must be either an IP address or a hostname
+# that maps to a single IP address.  Most of the normal httpd.conf commands
+# are available, as well as the ability to denote a special ResourceConfig
+# file for this host.
+# You can also specify an error level with this setting, by denoting the 
+# VirtualHost as Optional or Required.
+
+<VirtualHost 127.0.0.1 Optional>
+DocumentRoot /local
+ServerName localhost.ncsa.uiuc.edu
+ResourceConfig conf/localhost_srm.conf
+</VirtualHost>
 

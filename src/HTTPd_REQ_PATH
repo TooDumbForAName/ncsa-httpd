@@ -1,0 +1,212 @@
+child_main  			httpd.c
+ GetDescriptor			httpd.c
+  setproctitle
+  recv_fd
+ GetRemoteLogName		httpd.c
+  getpeername
+  rfc931
+ initialize_request		http_request.c
+  malloc
+  reset_security		http_access.c
+   free
+  init_header_vars		http_mime.c
+   free
+ RequestMain			http_request.c
+  signal
+  getline
+  setproctitle
+  decode_request		http_request.c
+   strtok
+   MapMethod			http_request.c
+   get_mime_headers
+    getline
+    strchr
+    isspace
+    strcasecmp
+    http2cgi			util.c
+    merge_header		env.c
+     realloc
+    make_env_str		env.c	
+     malloc
+     realloc
+  unescape_url			util.c
+  which_host_conf
+   get_local_addr
+    getsockname
+  get_remote_host		util.c
+   getpeername
+   strdup
+   gethostbyaddr
+   gethostbyname
+   inet_ntoa
+  process_request		http_request.c
+   translate_name		http_alias.c
+    getparents			util.c
+    make_full_path		util.c
+    log_reason			
+     malloc
+     log_error			util.c
+     free
+   send_node			http_send.c
+    stat
+    extract_path_info		http_send.c
+     count_dirs			util.c
+     make_dirstr		util.c
+     stat
+    evaluate_access		http_access.c
+     no2slash			util.c
+     reset_mime_vars		http_mime.c
+     is_matchexp		util.c
+     strcmp_match		util.c
+     check_dir_access		http_access.c
+      find_allow		http_access.c
+       in_ip			http_access.c
+       get_remote_host_min	util.c
+	getpeername
+	gethostbyaddr
+       in_domain		http_access.c
+      find_deny			http_access.c
+       in_ip			http_access.c
+       get_remote_host_min	util.c
+       in_domain		http_access.c
+     parse_htaccess		http_config.c
+      stat
+      FOpen			fdwrap.c
+      parse_access_dir		http_config.c
+       cfg_getline		util.c
+       access_syntax_error	http_config.c
+       cfg_getword		util.c
+       add_type			http_mime.c
+	malloc
+	strdup
+       add_encoding		http_mime.c
+	malloc
+	strdup
+       add_desc			http_dir.c
+	new_item		http_dir.c
+	 malloc 
+	 strdup
+       add_ignore		http_dir.c
+	new_item		http_dir.c
+       add_icon			http_dir.c
+	add_alt			http_dir.c
+	 new_item		http_dir.c
+	new_item		http_dir.c
+       add_readme		http_dir.c
+	new_item		http_dir.c
+       add_header		http_dir.c
+	new_item		http_dir.c
+       add_opts			http_dir.c
+	cfg_getword		util.c
+	add_opts_int		http_dir.c
+	 new_item		http_dir.c
+       strdup
+      FClose			fdwrap.c
+     readlink
+     check_auth			http_auth.c
+      auth_bong
+      uudecode
+      getword
+      get_pw
+      crypt
+      Digest_Check
+      k4_server_auth
+      k5_server_auth
+      check_krb_restrict
+      init_group		http_auth.c
+       FOpen			fdwrap.c
+       malloc
+       fread
+       FClose			fdwrap.c
+      DBM_Open			fdwrap.c
+      in_group			http_auth.c
+      DBM_Close			fdwrap.c
+    send_dir			http_send.c
+     construct_url
+     escape_url
+     index_directory		http_dir.c
+      Opendir
+      send_http_header
+      CloseDir
+      find_opts
+      find_header
+      insert_readme
+      make_dir_entry
+      malloc
+      qsort
+      output_directories
+      free
+      find_readme
+      insert_readme
+      log_transaction
+     probe_content_type		http_mime.c
+      find_ct			http_mime.c
+     send_cgi			cgi.c
+      add_common_vars		cgi.c
+       make_env_str		env.c
+      cgi_stub			cgi.c
+       can_exec			util.c
+       Pipe			fdwrap.c
+       fork
+       add_cgi_vars
+       error_log2stderr
+       execle/execve
+       getline			util.c
+       write
+       read
+       scan_script_header	cgi.c
+	getline			util.c
+	strdup
+	realloc
+       waitpid
+       send_http_header		http_mime.c
+	set_stat_line		http_mime.c
+	 free
+	 strdup
+	begin_http_header	http_log.c
+	 dump_default_header	http_mime.c
+       send_script		cgi.c
+	alarm
+	getline
+	write
+	read
+       kill_children		cgi.c
+	sleep
+	kill
+	waitpid
+      log_transaction
+     send_file			http_send.c
+      set_content_type		http_mime.c
+       find_ct			http_mime.c
+      send_parsed_file		http_include.c
+      FOpen			fdwrap.c
+      set_content_length	http_mime.c
+      set_last_modified		http_mime.c
+       gmtime
+       strftime
+       later_than		util.c
+      send_http_header		http_mime.c
+      send_fd			http_send.c
+       signal
+       fread
+       write
+      log_transaction		http_log.c
+      FClose			fdwrap.c
+    probe_content_type		http_mime.c
+    send_cgi			cgi.c
+    send_imagemap		imagemap.c
+     FOpen			fdwrap.c
+     pointinpoly		imagemap.c
+     sendmsg			imagemap.c
+     pointincircle		imagemap.c
+     pointinrect		imagemap.c
+     FClose			fdwrap.c
+    send_file			http_send.c
+   exec_cgi_script		cgi.c
+    get_path_info
+    evaluate_access
+    add_common_vars
+    cgi_stub
+ CompleteRequest		httpd.c
+  CloseAll			fd_wrap.c
+  free_request			http_request.c

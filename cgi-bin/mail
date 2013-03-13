@@ -21,7 +21,7 @@
 #                             |group:leader@domain.com,member@domain.com
 #                             +-----------------------------------------
 # ======================================================================
-# Carlos A. Pero (cpero@ncsa.uiuc.edu)              last update  4/30/95
+# Carlos A. Pero (cpero@ncsa.uiuc.edu)              last update 10/17/95
 # ======================================================================
 # Documentation for WebMonitor can be found at
 #                          <URL:http://hoohoo.ncsa.uiuc.edu/webmonitor/>
@@ -41,6 +41,15 @@
 # FOR THE SOFTWARE AND/OR DOCUMENTATION PROVIDED, INCLUDING, WITHOUT
 # LIMITATION, WARRANTY OF MERCHANTABILITY AND WARRANTY OF FITNESS FOR A
 # PARTICULAR PURPOSE.
+# ======================================================================
+# For the greatest security, this script relies on a 'mail.list' file
+# with a list of authorized nicknames and email address which can receive
+# email through this mail script.
+#
+# For greater scalability, the '@AUTHDOMAINS' array can be used to store
+# a list of domains.  Any email address ending with one of these domains
+# can use this script to receive email.  In this case, the full email
+# address becomes the 'nickname'.
 # ======================================================================
 # This script can be referenced 2 ways for the best flexibility:
 #
@@ -78,8 +87,12 @@
 ########################################################################
 ########## Configurable variables ######################################
 
-$SENDMAIL = '/usr/sbin/sendmail';
+$SENDMAIL = '/usr/lib/sendmail';
 #                                   The location of your sendmail binary
+
+@AUTHDOMAINS = ('');
+#           List of lower-case Internet domains that can use this script 
+#                                such as ('ncsa.uiuc.edu', 'domain.com')
 
 ## Also, make sure the first line of this script points
 ## to your PERL binary
@@ -88,31 +101,16 @@ $SENDMAIL = '/usr/sbin/sendmail';
 ########################################################################
 
 
-$SCRIPT = $ENV{'SCRIPT_NAME'};
+$ENV{'SCRIPT_NAME'} =~ m#(/.*/)(.*)$#;
+$SCRIPTDIR = $1;
+$SCRIPT = $2;
 
 #### Do standard HTTP stuff ####
 &cgi_receive;
 &cgi_decode;
 &cgi_header;
 
-#### Output email form unless you are receiving FORM input already ####
-&print_form unless keys %FORM;
-
-#### Make sure required fields are filled out ####
-if ($FORM{'nickname'}) {
-    #### This section is for receiving from this form ####
-    &error_blank_field('your name')  unless ($FORM{'from-name'});
-    &error_blank_field('your email address in the form of <I>name@domain</I>') unless ($FORM{'from-email'} =~ /\@/);
-    &error_blank_field('the subject of the message') unless ($FORM{'subject'});
-    &error_blank_field('your message') unless ($FORM{'message'});
-}
-else {
-    #### This section is for user's forms ####
-    #### Such as ACTION="/cgi-bin/mail?carlos" to have results forwarded ####
-    $FORM{'nickname'} = $ENV{'QUERY_STRING'};
-}
-
-#### Lookup email address based on 'nickname' ####
+#### Load mail.list into associative array ####
 open (MAILNAMES, "mail.list") || die ("$SCRIPT: Can't open mail.list: $!\n");
 while (<MAILNAMES>) {
     chop;
@@ -120,33 +118,64 @@ while (<MAILNAMES>) {
     $ADDRESS{$nick} = $addr;
 }
 close (MAILNAMES);
-&error_blank_field('the nickname of the recipient') unless ($ADDRESS{$FORM{'nickname'}});
 
-#### Make sure all necessary variables for email message are filled in
+#### Figure out who the information should be sent to ####
+if ($ENV{'QUERY_STRING'} =~ /\@/) {
+    #### User specified a full email address ####
+    ($machine = $') =~ tr/A-Z/a-z/;
+    undef $FLAG{'authorized'};
+    for ($[ .. $#AUTHDOMAINS) {
+	$FLAG{'authorized'} = $AUTHDOMAINS[$_], last if ($ENV{'QUERY_STRING'} =~ /$AUTHDOMAINS[$_]$/);
+    }
+    &error_blank_field('an authorized email address') unless ($FLAG{'authorized'});
+    $recipient = $ENV{'QUERY_STRING'};
+    $extraaction = "?$recipient";
+}
+elsif ($ENV{'QUERY_STRING'}) {
+    #### User specified a nickname ####
+    $nickname = $ENV{'QUERY_STRING'};
+    &error_blank_field('a valid recipient nickname') unless ($ADDRESS{$nickname});
+    $recipient = $ADDRESS{$nickname};
+    $extraaction = "?$nickname";
+}
+elsif ($FORM{'nickname'}) {
+    #### Input is coming from listbox, ready for forwarding ####
+    $nickname = $FORM{'nickname'};
+    &error_blank_field('a valid recipient nickname') unless ($ADDRESS{$nickname});
+    $recipient = $ADDRESS{$FORM{'nickname'}};
+}
+elsif ($ENV{'REQUEST_METHOD'} eq "POST") {
+    #### I don't know who the information was for ####
+    &error_blank_field('a valid recipient');
+}
+
+#### Output a default email form if not POSTing already ####
+&print_form unless ($ENV{'REQUEST_METHOD'} eq "POST");
+
+#### Check for require fields
+foreach $field (@requirefields) {
+    &error_blank_field($field) unless ($FORM{$field});
+}
+
+#### Fill in missing fields for forwarding FORM results ####
 ($FORM{'subject'}) || ($FORM{'subject'} = "FORM results");
-($FORM{'from-email'}) || ($FORM{'from-email'} = $ADDRESS{$FORM{'nickname'}});
+($FORM{'from-email'}) || ($FORM{'from-email'} = $recipient);
 ($FORM{'from-name'}) || ($FORM{'from-name'} = "WebMonitor mail");
 
-open (MAIL, "| $SENDMAIL $ADDRESS{$FORM{'nickname'}}") || die ("$SCRIPT: Can't open $mailprog: $!\n");
+open (MAIL, "| $SENDMAIL $recipient") || die ("$SCRIPT: Can't open $mailprog: $!\n");
 print MAIL "Reply-to: $FORM{'from-email'} ($FORM{'from-name'})\n";
 print MAIL "From: $FORM{'from-email'} ($FORM{'from-name'})\n";
-print MAIL "To: $ADDRESS{$FORM{'nickname'}}\n";
+print MAIL "To: $recipient\n";
 print MAIL "Subject: $FORM{'subject'}\n";
+print MAIL "X-Comments: =============================================================\n";
+print MAIL "X-Comments: NOTE:  This message was sent through the WebMonitor mail form\n";
+print MAIL "X-Comments: =============================================================\n";
+print MAIL "X-Comments: HOST:      $ENV{'REMOTE_HOST'} ($ENV{'REMOTE_ADDR'})\n";
+print MAIL "X-Comments: BROWSER:   $ENV{'HTTP_USER_AGENT'}\n";
+print MAIL "X-Comments: REFERER:   $FORM{'previous-url'}\n" if ($FORM{'previous-url'});
+print MAIL "X-Comments: =============================================================\n";
 print MAIL "\n";
-print MAIL "=============================================================\n";
-print MAIL "NOTE:  This message was sent through the WebMonitor mail form\n";
-print MAIL "=============================================================\n";
-print MAIL "REMOTE HOST:        $ENV{'REMOTE_HOST'}\n";
-print MAIL "REMOTE ADDRESS:     $ENV{'REMOTE_ADDR'}\n";
-print MAIL "HTTP_USER_AGENT:    $ENV{'HTTP_USER_AGENT'}\n";
-print MAIL "=============================================================\n";
-print MAIL "\n";
-if ($ENV{'QUERY_STRING'}) {
-    &dump_values(FORM, MAIL);
-}
-else {
-    print MAIL "$FORM{'message'}\n";
-}
+&dump_values(FORM, MAIL);
 print MAIL "\n";
 close (MAIL);
 
@@ -172,18 +201,13 @@ print qq|<HR>\n|;
 print "<PRE>\n";
 print "Reply-to: $FORM{'from-email'} ($FORM{'from-name'})\n";
 print "From: $FORM{'from-email'} ($FORM{'from-name'})\n";
-print "To: $ADDRESS{$FORM{'nickname'}}\n";
+print "To: $recipient\n";
 print "Subject: $FORM{'subject'}\n";
 print "\n";
-if ($ENV{'QUERY_STRING'}) {
-    &dump_values(FORM, STDOUT);
-}
-else {
-    print "$FORM{'message'}\n";
-}
+&dump_values(FORM, STDOUT);
 print "\n";
 print "</PRE>\n";
-print "</BODY>\n";
+print "</BODY></HTML>\n";
 exit;
 
 #####################################################################
@@ -195,8 +219,7 @@ sub error_blank_field {
     print "<HTML><HEAD><TITLE>WebMonitor-Email Error</TITLE></HEAD><BODY>\n";
     print "<H1>Error!</H1>\n";
     print "You did not fill in $variable.\n";
-    print "Please go back to the form and do so.\n";
-    print "</BODY>\n";
+    print "</BODY></HTML>\n";
     exit;
 }
 
@@ -233,71 +256,70 @@ sub cgi_decode {
         $value =~ s/\|/ /g;
         $value =~ s/^!/ /g; ## Allow exclamation points in sentences
 
-        #### Skip blank text entry fields
-        next if ($value eq "");
-
-        #### Check for "assign-dynamic" field names
-        #### Mainly for on-the-fly input names, especially checkboxes
-        if ($name =~ /^assign-dynamic/) {
+	#### Split apart any directive prefixes
+	#### NOTE: colons are reserved to delimit these prefixes
+	@parts = split(/:/, $name);
+	$name = $parts[$#parts];
+	if (grep(/^require$/, @parts)) {
+	    push (@requirefields, $name);
+	}
+	if (grep(/^ignore$/, @parts)) {
+	    push (@ignorefields, $name);
+	}
+	if (grep(/^dynamic$/, @parts)) {
+	    #### For simulating a checkbox
+	    #### It may be dynamic, but useless if nothing entered
+            next if ($value eq "");
             $name = $value;
             $value = "on";
-        }
+	}
+
+        #### Skip generally blank fields
+        next if ($value eq "");
 
 	#### Allow for multiple values of a single name
         $FORM{$name} .= ", " if ($FORM{$name});
 
         $FORM{$name} .= $value;
+	#### Add to ordered list if not on list already
+        push (@fields, $name) unless (grep(/^$name$/, @fields));
     }
 }
 
 sub dump_values {
     local($env, $handle) = @_;
-    eval "\@keys = keys \%$env";
-    eval "\@values = values \%$env";
     ($handle eq "STDOUT") && (print $handle "<PRE>\n");
-    while ($#keys >= 0) {
-	$key = pop(@keys);
-	$value = pop(@values);
-	if ($value =~ /[\cM\n]/) {
-	    print $handle "($key)\n";
-	    print $handle "-" x 70, "\n", $value, "-" x 70, "\n";
+    foreach $field (@fields) {
+	next if (grep(/^$field$/, @ignorefields));
+	if ($FORM{$field} =~ /[\cM\n]/) {
+	    print $handle "($field)\n";
+	    print $handle "-" x 75, "\n", $FORM{$field}, "\n", "-" x 75, "\n";
 	}
 	else {
-            print $handle "($key)  $value\n";
+            print $handle "($field)  $FORM{$field}\n";
 	}
     }
     ($handle eq "STDOUT") && (print $handle "</PRE>\n");
-
 }
 
 sub print_form {
-    #### Assign path_info and query_string if necessary
-    #### $path_info = "";
-
-    open (MAILNAMES, "mail.list") || die ("$SCRIPT: Can't open mail.list: $!\n");
-    while (<MAILNAMES>) {
-	chop;
-	($nickname, $address) = split(/:/, $_);
-	$ADDRESS{$nickname} = $address;
-    }
-    close (MAILNAMES);
-
     print qq|<HTML><HEAD><TITLE>WebMonitor-Email Form</TITLE></HEAD><BODY>\n|;
     print qq|<H1>$ENV{'SERVER_NAME'} <A HREF="http://hoohoo.ncsa.uiuc.edu/webmonitor/module-mail.html">Email Form</A></H1>\n|;
-    print qq|<FORM METHOD="POST" ACTION="$SCRIPT$path_info$query_string">\n|;
+    print qq|<FORM METHOD="POST" ACTION="$ENV{'SCRIPT_NAME'}$extraaction">\n|;
     print qq|<HR>\n|;
     print qq|<INPUT TYPE="submit" VALUE="Send Email"> to |;
 
-
-    if ($ADDRESS{$ENV{'QUERY_STRING'}}) {
-	print qq|<B>$ENV{'QUERY_STRING'}</B> <I>($ADDRESS{$ENV{'QUERY_STRING'}})</I>\n|;
-	print qq|<INPUT TYPE="hidden" NAME="nickname" VALUE="$ENV{'QUERY_STRING'}">\n|;
+    if ($nickname) {
+	print qq|<I>$recipient</I> <B>($nickname)</B>\n|;
+    }
+    elsif ($recipient) {
+	print qq|<I>$recipient</I>\n|;
     }
     else {
-	print qq|<SELECT NAME="nickname">\n|;
+	print qq|<SELECT NAME="ignore:nickname">\n|;
 	print qq|<OPTION>Select name...\n|;
-        foreach $nickname (sort keys %ADDRESS) {
-	    print qq|<OPTION>$nickname\n|;
+        foreach $nick (sort keys %ADDRESS) {
+	    print qq|<OPTION>$nick\n|;
         }
         print qq|</SELECT>\n|;
     }
@@ -305,14 +327,14 @@ sub print_form {
 
     print qq|<HR>\n|;
     print qq|<PRE>|;
-    print qq|    Your Name: <INPUT NAME="from-name" SIZE="30">\n|;
-    print qq|Email Address: <INPUT NAME="from-email" SIZE="30">\n|;
-    print qq|      Subject: <INPUT NAME="subject" SIZE="40">    <INPUT TYPE="reset" VALUE="Clear Message">\n|;
+    print qq|    Your Name: <INPUT NAME="require:ignore:from-name" SIZE="30">\n|;
+    print qq|Email Address: <INPUT NAME="require:ignore:from-email" SIZE="30">\n|;
+    print qq|      Subject: <INPUT NAME="ignore:require:subject" SIZE="40">    <INPUT TYPE="reset" VALUE="Clear Message">\n|;
     print qq|</PRE>\n|;
-    print qq|<TEXTAREA NAME="message" ROWS="15" COLS="70"></TEXTAREA>\n|;
-    print qq|<INPUT TYPE="hidden" NAME="previous-url" VALUE="$ENV{'HTTP_REFERER'}">\n|;
+    print qq|<TEXTAREA NAME="require:message" ROWS="15" COLS="75"></TEXTAREA>\n|;
+    print qq|<INPUT TYPE="hidden" NAME="ignore:previous-url" VALUE="$ENV{'HTTP_REFERER'}">\n|;
     print qq|</FORM>\n|;
-    print qq|</BODY>\n|;
+    print qq|</BODY></HTML>\n|;
 
     exit;
 }

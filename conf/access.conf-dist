@@ -1,6 +1,18 @@
-# access.conf: Global access configuration
-# Online docs at http://hoohoo.ncsa.uiuc.edu/
-# I suggest you consult them; this is important and confusing stuff.
+#===========================================================================
+# NCSA HTTPd (comments, questions to httpd@ncsa.uiuc.edu)
+#===========================================================================
+# This is the gloabal access configuration file.
+# Documentation for NCSA HTTPd is available from
+# http://hoohoo.ncsa.uiuc.edu/
+# Documentation specific to this file is at 
+# http://hoohoo.ncsa.uiuc.edu/docs/setup/access/Overview.html
+# http://hoohoo.ncsa.uiuc.edu/docs/tutorials/user.html
+#
+# NCSA takes no responsibilty for any problems that result from the use
+# of this server.  See the COPYRIGHT statement that came with this 
+# distribution.
+#===========================================================================
+
 
 # /usr/local/etc/httpd/ should be changed to whatever you set ServerRoot to.
 <Directory /usr/local/etc/httpd/cgi-bin>

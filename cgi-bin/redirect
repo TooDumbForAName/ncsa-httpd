@@ -1,0 +1,116 @@
+#!/usr/local/bin/perl 
+#
+# redirect -- PERL redirection script
+#
+# Carlos A. Pero <cpero@ncsa.uiuc.edu>, 10/22/95
+#
+# For usage information, request the script's URL through the Web
+# without submitting any data.
+#
+
+$ENV{'SCRIPT_NAME'} =~ m#(/.*/)(.*)$#;
+$SCRIPTDIR = $1;
+$SCRIPT = $2;
+
+#### Do standard HTTP stuff ####
+&cgi_receive;
+&cgi_decode;
+
+#### Output instructions if not receiving a URL ####
+&print_info unless $FORM{'url'};
+
+#### Output redirection ####
+print <<"EndResponse";
+Status: 302 Redirected
+Content-type: text/html
+Location: $FORM{'url'}
+
+<HTML><HEAD>
+<TITLE>Client Redirected</TITLE>
+</HEAD><BODY>
+The CGI script has redirected your browser to <A HREF="$FORM{'url'}">this location</A>.
+</BODY></HTML>
+EndResponse
+exit;
+
+#####################################################################
+#### SUBROUTINES ####################################################
+
+sub cgi_receive {
+    if ($ENV{'REQUEST_METHOD'} eq "POST") {
+        read(STDIN, $incoming, $ENV{'CONTENT_LENGTH'});
+    }
+    else {
+        $incoming = $ENV{'QUERY_STRING'};
+    }
+}
+
+sub cgi_decode {
+    @pairs = split(/&/, $incoming);
+
+    foreach (@pairs) {
+        ($name, $value) = split(/=/, $_);
+
+        $name  =~ tr/+/ /;
+        $value =~ tr/+/ /;
+        $name  =~ s/%([A-F0-9][A-F0-9])/pack("C", hex($1))/gie;
+        $value =~ s/%([A-F0-9][A-F0-9])/pack("C", hex($1))/gie;
+
+        #### Strip out semicolons unless for special character
+        $value =~ s/;/$$/g;
+        $value =~ s/&(\S{1,6})$$/&\1;/g;
+        $value =~ s/$$/ /g;
+
+        $value =~ s/\|/ /g;
+        $value =~ s/^!/ /g; ## Allow exclamation points in sentences
+
+        #### Skip generally blank fields
+        next if ($value eq "");
+
+	#### Allow for multiple values of a single name
+        $FORM{$name} .= ", " if ($FORM{$name});
+
+	#### Check to see if input NAME is the URL, i.e. SUBMIT button
+	if ($name =~ m|^\w+:\S+$|) { $FORM{'url'} = $name; }
+
+        $FORM{$name} .= $value;
+    }
+}
+
+sub print_info {
+    print <<"EndHelp";
+Content-type: text/plain
+
+This redirect script will accept input from a FORM, either via
+METHOD GET or POST, and send a 300-level HTTP status code to
+redirect the browser to a new URL.
+
+There are two ways to use a FORM in conjunction with this script:
+
+1.  A list of URLs with a submit button
+       <FORM METHOD="POST" ACTION="/cgi-bin/redirect">
+       <SELECT NAME="url">
+       <OPTION VALUE="http://www.ncsa.uiuc.edu/">NCSA
+       <OPTION VALUE="http://hoohoo.ncsa.uiuc.edu/">HTTPd
+       <OPTION VALUE="http://www.uiuc.edu/">U of I
+       </SELECT>
+       <INPUT TYPE="submit" VALUE="Go to URL">
+       </FORM>
+    In this case, the script will find the input called "url" and
+    redirect the browser to this location.
+
+2.  Multiple submit buttons
+       <FORM METHOD="POST" ACTION="/cgi-bin/redirect">
+       <INPUT TYPE="submit" NAME="http://www.ncsa.uiuc.edu/" VALUE="NCSA">
+       <INPUT TYPE="submit" NAME="http://hoohoo.ncsa.uiuc.edu/" VALUE="HTTPd">
+       <INPUT TYPE="submit" NAME="http://www.ncsa.uiuc.edu/" VALUE="U of I">
+       </FORM>
+    In this case, the script will find an input NAME that looks like a URL,
+    and redirect the browser to this location.
+
+Either method should work fine, just don't use both within the same FORM.
+
+EndHelp
+    exit;
+}
+

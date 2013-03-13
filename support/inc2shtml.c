@@ -9,8 +9,14 @@
  * look on stdin. It will output the new shtml file on stdout.
  */
 
+#include "config.h"
+#include "portability.h"
 
 #include <stdio.h>
+#ifndef NO_STDLIB_H
+# include <stdlib.h>
+#endif /* NO_STDLIB_H */
+#include <ctype.h>
 
 #define MAX_STRING_LEN 256
 

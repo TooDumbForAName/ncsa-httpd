@@ -1,0 +1,32 @@
+========================================================================
+NCSA HTTPd Server 1.5
+ 
+Copyright (c) 1995 Board of Trustees, University of Illinois
+http://hoohoo.ncsa.uiuc.edu/
+========================================================================
+  
+The support directory contains various programs which support
+various aspects of server configuration and usage.
+
+The auth sub-directory contains various scripts for use with PEM/PGP
+authorization and encryption.
+
+htpasswd creates a standard flat file password file for use in Basic
+Authentication
+
+dbmpasswd creates  DBM password file(s) for use with Basic Auth
+
+dbmgroup creates  DBM group file(s) for use with require group access
+
+htdigest creates a flat file password file for use with MD5 digest auth
+
+dbmdigest creates DBM password file(s) for use with MD5 digest auth
+
+std2dbm takes a standard flat file .htpasswd file and converts it to DBM 
+file(s)
+
+dbm2std takes DBM file(s) and converts to a flat file
+
+inc2shtml takes old style INCSRV and converts them to new SSI html
+
+unescape converts an escaped URL to standard URL

@@ -1,0 +1,251 @@
+Changes for 1.5.1
+------------------
+*) Imagemaps (both internal and external) now add the path of the map file
+   for non full path urls in the map file
+*) A couple logging functions didn't check reqInfo->remote_name for a NULL
+*) change getuid to geteuid in httpd.c so that effectively root people can
+   start the server and have it change uids
+*) Slight code rearrangement to make Redirects from .htaccess more 
+   useful because the file doesn't have to exist. 
+*) Added support for restricted access by Referer field
+*) Added OnDeny command for Limit directive which allows a redirect on
+   failure (esp. useful for denying by referer)
+*) Added string allocating mechanism for speed
+*) Added CONTENT_MD5 header support from patches by Martin Hamilton 
+   (martin@net.lut.ac.uk)
+*) Server doesn't keep creating more structures in the event of KeepAlive
+*) Added bounds checking for security structures
+*) Fixed Order mutual-failure 
+*) Support both CERN and NCSA style imagemaps (on a line by line basis)
+*) Attempting to make the server thread safe
+*) First attempt at allowing ErrorDocument 401s as html files (still broken)
+*) Fixed string searching for user in group
+*) Close csd (socket) on exec of CGI scripts so that client doesn't hang
+   waiting for the scripts (and their children) to finish
+*) made a single interface for most output functions to make it easier
+   to go to different output functions (SSL is a good example)
+*) remove path_args/path_alias crap, and put it in reqInfo structure
+*) Why do we require full URLs in Redirect?  A local (root) url should work fine
+*) Redirect from .htaccess should work now (completely)
+*) Added hack to allow SSI of CGI, at a great expense of speed (CGI_SSI_HACK)
+*) Made getline() code re-entrant (now has its own sock_buf struct)
+
+
+
+Fixes for 1.5c
+------------------
+*) add newline character to list of characters to strip from shell cmds
+   to prevent security hole
+*) in_ip patch is broken, revert to the old way
+*) Clean up possible memory leak in status_line code from CGI scripts
+*) Fix possible SIGSEGV condition in send_fd_timed_out()
+*) Fixed Mutual-Failure
+*) If you don't have a require or allow line in the .htaccess LIMIT section,
+   it wouldn't work (ie, just deny), now fixed
+*) change getuid to geteuid in httpd.c so that effectively root people can
+   start the server and have it change uids
+*) Fix group checking
+
+Fixes for 1.5a
+-------------------
+*) Typo/Thinko for http_access.c which makes order deny/allow not work as
+   documented
+
+Fixes for 1.5 Final
+-------------------
+*) Clean up makefiles
+*) Fix mixed up rfc931 strings (remote_logname)
+*) Fixed multiple string lengths in get_mime_headers() and scan_script_headers()
+*) set standalone to 0 after cgi fork so that errors cause exit
+*) clean up local redirects
+*) clean up send_fd and send_fp code
+*) fixed domain restriction bug (last one, I hope)
+*) changed code for checking for owner of symbolic links
+*) allow SRM config in server conf with <SRMOptions> tag
+*) don't leak file pointer on access_syntax_error()
+*) Use send_fd for exec cgi and cmd in SSI
+*) send back 204 no content as default for imagemaps which have no default
+*) clear default array in imagemap first
+*) TACHOMETER off by one
+*) include config.h and portability.h in support programs
+*) recoded no2slash to fix possible security holes
+*) set ownDNS to TRUE for DNSmode Minimal
+
+
+Fixes for 1.5 Beta 7
+-------------------
+*) typo: strncat for strncpy in DOCUMENT_URI setting for SSI
+*) various domain restriction bugs
+*) DNSMode support
+*) DNSMode Minimum should now do the DNS lookup for authentication if necessary
+*) RESOURCE_LIMIT compile time option makes MaxServers the hard limit
+   for number of servers to run.
+*) fix imagemap for full urls
+*) fix referer logging in error_log
+*) fix SSI file closing
+*) fixed LOCAL hack to check if remote_host is NULL
+*) setrlimit (NOFILES) to try and raise the number of file descriptors
+   allowed as high as possible.
+*) Added patch by Stuart Lynne (sl@wimsey.com) to make proc title a tachometer
+*) Possible fixes for loop errors and spontaneous 403 errors
+
+
+Fixes for 1.5 Beta 6
+--------------------
+*) Added SERVER_ADMIN CGI Variable per requests
+*) Added LOCAL hack to allow matching in domain restriction of all local 
+   hostnames (Maurizio Codogno (mau@beatles.cselt.stet.it))
+*) Added support for HTTP/1.1 Host: header for virtual host support
+*) Various includes file and portability fixes
+*) Fixed weird special case of domain restriction failure from access.conf
+   in conjunction with having .htaccess files
+*) Fixed new VirtualHost ErrorDocument support so as not to cause SIGSEGV
+*) Moved RefererIgnore matching to log_transaction() to allow HTTP/1.1 host
+   support to work
+*) Changed debugging dump (SIGUSR1)
+*) Typo in ErrorDocument settings
+*) Added Optional and Required parameters to VirtualHost configuration tag
+   to allow for a single host configuration failure not to bring down all
+   of them
+*) Added patch by Elf Sternberg (elf@aaden.spry.com) to allow configuring of
+   process titles in SETPROCTITLE
+*) Change LogType to LogOptions and added a new option (ServerName) which
+   will log the servername of the request to the access_log
+*) Added CoreDirectory directive to tell HTTPd where to dump core
+
+
+Fixes for 1.5 Beta 5
+--------------------
+*) Added support for Combined LogType (CLF with referer and useragent)
+*) Added check at launch to attempt to keep people from leaving a security
+   hole open by leaving the log file directory writeable by the wrong people
+*) Added support for internal imagemap support
+*) Added support for VirtualHost level ErrorDocuments 
+*) Added date stamp to UserAgent and RefererLogs to allow for easier correlation
+*) Added file descriptor wrappers for directories and DBM files
+*) Fix SSI bug where index filename not added to DOCUMENT_URI
+*) Don't pass PATH_INFO information to index files unless specifically 
+   refered to (ie, do in case of /index.cgi/wow, but not in /wow)
+*) Add "fix" by Sun for better performance under Solaris
+*) Change children proctitle to "idle"
+*) Removed getdomainname patch, its not portable and not the right thing to do
+*) changed atoi() in uname2id() and gname2id() to scan_long.  If the atoi
+   failed, it would return 0, causing the server to run as root
+
+
+
+Fixes for 1.5 Beta 4
+--------------------
+*) Fixed typo in FD_LINUX support
+*) Fixed support for NeXT platform
+*) order of operations wrong on restart
+*) Now pass environment to CGI script from SSI
+*) Fix Alias/ScriptAlias/Redirects for VirtualHost
+*) Fix if all of POST data read on first pass, don't try to read more
+   as seen through CERN proxy
+*) Work around for systems which don't support numeric IP addresses passed
+   to gethostbyname()
+*) Added log_reason for non-exec CGI
+*) Pass reqInfo to init_header_vars() in local redirects from cgi scripts
+*) use unbuffered i/o for file writes to fix fwrite bug on AIX 3.2.5 for PowerPC
+*) fix write loop for send_script() for CGI scripts
+*) use stat inplace of lstat to fix IfSymLinkOwner bug if link to link to file
+*) should now recognize and use numeric IP on systems with older versions
+   of bind which don't support a numeric IP to gethostbyname()
+*) Fix SSI, flastmod wasn't working
+*) freeing ENV array at the wrong time, esp. in SSI
+*) Fix refererignore again
+*) Ultrix not brain dead since 4.4, so put #define in old hack for determining
+   which version of ultrix you are compiling on
+*) possible help for get_local_host() on some systems which didn't work before
+*) HEAD_GETPASS for ultrix in support directory
+
+
+Fixes for 1.5 Beta 3
+--------------------
+*) Fixes to various scripts for cleaner compiles
+*) Added KeepAlive directives to example httpd.conf
+*) Fixed Makefile support for SVR4, added ConvexOS, QNX, ATTSVR3 from 1.4.2
+*) Cleaned up header include directives for portability
+*) Added file descriptor wrapper to prevent leaks
+*) Cleaned up exec code, so forked child always dies even if exec() fails
+   in a funny way (should make sure no children of children get left around)
+*) file descriptor leak if CGI script returns Location header closed
+*) attempt to keep environment and authorization between multiple requests
+   like for internal redirects and on ErrorDocument
+*) Added NIS_SUPPORT patch by Kevin Ruddy
+*) Fixed Multiple referer ignore
+*) fixed an off by one error in environment handling (env.c).  Probable
+   cause of coredumps on Solaris machines, possibly others.
+*) Now allow DocumentRoot in httpd.conf file (for VirtualHosts)
+*) Added support for Linux file descriptor passing /proc hack
+*) Cleaned up File Not Found error message (per HyperNews suggestion)
+*) Allow restart when relative path used with -f on command line
+   Vince Tkac (tkac@oclc.org)
+*) Cleaned up Restart code ( kill -HUP ).  Should now work on all systems
+   regardless of optimization
+*) Cleaned up sockaddr usage
+*) Moved socket initialiazation to its own function
+*) Now log start command to error_log
+*) Improved usage function (for -v command line)
+*) Made sigjmp_buf default define for JMP_BUF (missed from 1.4.2)
+*) Fixed getline()
+
+
+
+Fixes for 1.5 Beta 2
+--------------------
+*) To fix AddType .cgi completely, now has a single virtual path for
+   any method to a "standard document" and checks just before sending
+   if the method is valid for the document type.
+*) General code reorganization, including renaming of scripts to cgi
+   and removing all method specific files, and creating an http_send
+   for the new general case
+*) Moved all non-security compile time options to config.h
+*) Support for profiling the code added
+*) A/UX, SVR4, SCO3 support updated
+*) New type of process title changing subroutine added, and made a compile
+   time option
+*) Collapsed number of malloc()'s for performance
+*) DBM support now properly #define'd
+*) Duh, always initialize url/args/filename
+*) fixed multihome support to allow more than 2 entries
+*) fixed access control
+*) log missing user attempt - Gioacchino La Vecchia (gio@di.unipi.it)
+*) explicitly allow or disallow certain server configuration directives
+   in virtual hosts
+*) strip ending / on document root at configuration time
+*) stat filesystem for .htaccess files instead of checking failure of fopen()
+   for speed improvement
+*) change order of mime initialization to get actual location of file first
+*) missing LF in redirect message from die()
+*) actually log the error message if using an error document for 500 errors
+*) close more file descriptors on errors
+*) make separate content_type variables for type as sent and type of reply
+*) allow Connection header to be made into a CGI variable
+*) fix signal handling during CGI 
+*) Only shutdown(sd,0) to disallow receives not sends and receives
+   This fix was for OSF/1 2.0, but may fix AIX problems of garbling ends
+   of images
+*) attempt to lessen the number of fflush()'s called during a transaction
+*) move local variables that might be clobbered by setjmp/longjmp
+*) call tzset on all systems
+*) log errno on some errors
+*) log which URL is being aborted or timing out
+*) Keberos fixes
+*) Multiple referer ignore added
+*) Probably some I've missed
+
+
+New for 1.5 Beta 1
+------------------
+*) Multiple Directory Indexes allowed
+*) Redirects from .htaccess files
+*) RedirectPermanent
+*) MD5 Digest Authentication
+*) Kerberos v4 Authentication
+*) Kerberos v5 Authentication
+*) Connection: Keep-Alive extension
+*) DBM support for .htpasswd/.htgroup files
+*) Enhanced Access Control
+*) Multihome/Virtual Interface support

@@ -1,0 +1,22 @@
+#!/bin/sh
+
+# Set this to wherever you installed my hacked uudecode
+HACKED_UUDECODE=/X11/robm/httpd/htauth/uudecode
+# Set this to the directory in which you will keep your users' keys.
+# You should keep each user's public key in a file in this directory, and the
+# filename should be that user's entity name.
+KEYS=/X11/robm/httpd/htauth/ripem-keys
+# Set this to your server's entity name
+# Be sure you place your server's public key into this user's .plan so that 
+# the clients can find it.
+PEMUSER=webmaster@hoohoo.ncsa.uiuc.edu
+# Set this to the location of your secret key
+SECKEY=/X11/robm/httpd/htauth/.key-private
+# Set this to the password to your secret key
+KEYPASS=mypassword
+# Set this to the location of your RIPEM executable
+RIPEMBIN=/usr/local/bin/ripem
+
+# That should be all you need to edit.
+
+sed -e 's/Originator-Key-Asymmetric/Originator-Key-Disabled/g' | $RIPEMBIN -d -u $PEMUSER -Y f -p $KEYS/$1 -s $SECKEY -k $KEYPASS | $HACKED_UUDECODE

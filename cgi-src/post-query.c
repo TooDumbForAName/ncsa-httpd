@@ -7,6 +7,7 @@
 #else
 char *getenv();
 #endif
+#include <string.h>
 
 #define MAX_ENTRIES 10000
 

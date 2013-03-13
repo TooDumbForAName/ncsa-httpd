@@ -9,40 +9,42 @@
   * Author: Wietse Venema, Eindhoven University of Technology, The Netherlands.
   */
 
+
+#include "config.h"
+#include "portability.h"
+
 #ifndef lint
 static char sccsid[] = "@(#) rfc931.c 1.8 93/12/13 22:23:20";
-#endif
+#endif /* lint */
 
 #ifndef _HPUX_SOURCE
-#define _HPUX_SOURCE
-#endif
+# define _HPUX_SOURCE
+#endif /* _HPUX_SOURCE */
 
 #ifdef SCO3
-#define SIGALRM 14
-#endif
+# define SIGALRM 14
+#endif /* SCO3 */
 
 /* System libraries. */
 
 #include <stdio.h>
 #ifndef ATTSVR3
-#include <syslog.h>
+# include <syslog.h>
 #else
-#define syslog(a,b) perror(b)
-#endif
+# define syslog(a,b) perror(b)
+#endif /* ATTSVR3 */
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <setjmp.h>
 #include <signal.h>
-
-extern char *strchr();
-extern char *inet_ntoa();
+#include <string.h>
 
 /* Local stuff. */
 
 /* #include "log_tcp.h" */
 
-#define RFC931_TIMEOUT	500
+#define RFC931_TIMEOUT  45
 #define	RFC931_PORT	113		/* Semi-well-known port */
 #define	ANY_PORT	0		/* Any old port will do */
 #define FROM_UNKNOWN  "unknown"
@@ -53,10 +55,7 @@ static jmp_buf timebuf;
 
 /* fsocket - open stdio stream on top of socket */
 
-static FILE *fsocket(domain, type, protocol)
-int     domain;
-int     type;
-int     protocol;
+static FILE *fsocket(int domain, int type, int protocol)
 {
     int     s;
     FILE   *fp;
@@ -75,11 +74,8 @@ int     protocol;
 
 /* bind_connect - bind both ends of a socket */
 
-int     bind_connect(s, local, remote, length)
-int     s;
-struct sockaddr *local;
-struct sockaddr *remote;
-int     length;
+int     bind_connect(int s, struct sockaddr* local, struct sockaddr* remote, 
+		     int length)
 {
     if (bind(s, local, length) < 0) {
 	syslog(LOG_ERR, "bind: %m");
@@ -91,17 +87,14 @@ int     length;
 
 /* timeout - handle timeouts */
 
-static void timeout(sig)
-int     sig;
+static void timeout(int sig)
 {
     longjmp(timebuf, sig);
 }
 
 /* rfc931 - return remote user name, given socket structures */
 
-char   *rfc931(rmt_sin, our_sin)
-struct sockaddr_in *rmt_sin;
-struct sockaddr_in *our_sin;
+char   *rfc931(struct sockaddr_in *rmt_sin, struct sockaddr_in *our_sin)
 {
     unsigned rmt_port;
     unsigned our_port;
@@ -183,7 +176,7 @@ struct sockaddr_in *our_sin;
 		     * protocol, not part of the data.
 		     */
 
-		    if (cp = strchr(user, '\r'))
+		    if ((cp = strchr(user, '\r')))
 			*cp = 0;
 		    result = user;
 		}

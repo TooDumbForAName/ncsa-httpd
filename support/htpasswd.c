@@ -4,12 +4,18 @@
  * Rob McCool
  */
 
+#include "config.h"
+#include "portability.h"
+
 #include <sys/types.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/signal.h>
 #include <stdlib.h>
 #include <time.h>
+#ifdef NEED_CRYPT_H
+#include <crypt.h>
+#endif /* NEED_CRYPT_H */
 
 #define LF 10
 #define CR 13
@@ -79,10 +85,13 @@ to64(s, v, n)
     }
 }
 
+#ifdef HEAD_CRYPT
 char *crypt(char *pw, char *salt); /* why aren't these prototyped in include */
+#endif /* HEAD_CRYPT */
+
 #ifdef HEAD_GETPASS
 char *getpass(char *prompt);
-#endif
+#endif /* HEAD_GETPASS */
 
 void add_password(char *user, FILE *f) {
     char *pw, *cpw, salt[3];

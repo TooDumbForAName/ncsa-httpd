@@ -1,0 +1,5 @@
+#!/bin/sh
+
+echo Status: 204 Do Nothing
+echo
+

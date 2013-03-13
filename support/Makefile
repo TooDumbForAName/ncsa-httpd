@@ -1,7 +1,12 @@
+## NCSA HTTPd 
+# Support directory makefile
+
 # For gcc
 CC= gcc
 # For ANSI compilers
 #CC= cc
+
+RM= /bin/rm -f
 
 #For Optimization
 #CFLAGS= -O2
@@ -9,68 +14,108 @@ CC= gcc
 CFLAGS= -g
 # For SCO ODT
 #EXTRA_LIBS= -lcrypt_i
+# For DBM Support
+#EXTRA_LIBS = -lndbm 
+# For ATTSVR3
+#CFLAGS = -DNO_STDLIB_H
 
-RM= /bin/rm -f
-#--- You shouldn't have to edit anything else. ---
+# Need src directory for config.h and portability.h.  May need more for DBM
+INCLUDES = -I../src
 
+#--------------------------------------------------------------------------
+#--------------- You shouldn't have to edit anything else. ----------------
+#--------------------------------------------------------------------------
+
+SUPPORT = htpasswd unescape inc2shtml htdigest dbm2std std2dbm dbmdigest \
+	dbmgroup dbmpasswd webgrab
 .c.o: 
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CFLAGS) $(INCLUDES) $<
 
-all: htpasswd unescape inc2shtml
+all: $(SUPPORT)
 
-aux: $(OBJS)
-	make all CC=gcc CFLAGS=-O2
+aix3:
+	make all CC=gcc CFLAGS=-DAIX3
 
-aix3: $(OBJS)
-	make all CC=gcc
+aix4:
+	make all CC=gcc CFLAGS=-DAIX4
 
-aix4: $(OBJS)
-	make all CC=gcc
-
-sunos: $(OBJS)
-	make all CC=gcc
-
-solaris: $(OBJS)
-	make all CC=gcc
-hp-gcc: $(OBJS)
-	make all CC=gcc
+aux:
+	make all CC=gcc CFLAGS="-O2 -DAUX -D_POSIX_SOURCE"
 
 hp-cc:
-	make all CC=cc CFLAGS=-Ae
+	make all CC=cc CFLAGS="-Ae -DHPUX" EXTRA_LIBS=-lndbm
 
-sgi4: $(OBJS)
-	make all CC=cc CFLAGS=-DHEAD_GETPASS
+hp-gcc:
+	make all CC=gcc CFLAGS="-DHPUX" EXTRA_LIBS=-lndbm
 
-sgi5: $(OBJS)
-	make all CC=cc
+linux:
+	make all CC=gcc CFLAGS="-DLINUX" EXTRA_LIBS=-lgdbm
 
-decmips: $(OBJS)
-	make all CC=cc
+netbsd: 
+	make all CC=cc CFLAGS="-DNETBSD" EXTRA_LIBS=-lcrypt
 
-decaxp: $(OBJS)
-	make all CC=cc
+next:
+	make all CC=cc CFLAGS="-DNeXT" EXTRA_LIBS=-ldbm
 
-netbsd: $(OBJS)
-	make all CC=cc EXTRA_LIBS=-lcrypt
+osf1:
+	make all CC=cc CFLAGS="-DOSF1"
 
-linux: $(OBJS)
-	make all CC=gcc
+sgi4: 
+	make all CC=cc CFLAGS="-DIRIX -DHEAD_GETPASS"
 
-svr4: $(OBJS)
-	make all CC=cc
+sgi5:
+	make all CC=cc CFLAGS="-DIRIX"
 
-tar: htpasswd unescape
-	$(RM) htpasswd unescape
+solaris:
+	make all CC=gcc CFLAGS="-DSOLARIS2" EXTRA_LIBS="-lnsl -lsocket"
+
+sunos:
+	make all CC=gcc CFLAGS="-DSUNOS"
+
+svr4:
+	make all CC=cc CFLAGS="-I/usr/include -I/usr/ucbinclude -DSVR4" \
+	 EXTRA_LIBS="-lc -L/usr/ucblib -ldbm -lucb -lnsl -lsocket"
+
+ultrix:
+	make all CC=gcc CFLAGS="-DULTRIX"
 
 htpasswd: htpasswd.c
-	$(CC) $(CFLAGS) htpasswd.c -o htpasswd $(EXTRA_LIBS)
+	$(CC) $(CFLAGS) $(INCLUDES) htpasswd.c -o htpasswd $(EXTRA_LIBS)
+
+dbmpasswd: dbmpasswd.c
+	$(CC) $(CFLAGS) $(INCLUDES) dbmpasswd.c -o dbmpasswd $(EXTRA_LIBS)
+
+dbmgroup: dbmgroup.c
+	$(CC) $(CFLAGS) $(INCLUDES) dbmgroup.c -o dbmgroup $(EXTRA_LIBS)
+
+std2dbm: std2dbm.c
+	$(CC) $(CFLAGS) $(INCLUDES) std2dbm.c -o std2dbm $(EXTRA_LIBS)
+
+dbm2std: dbm2std.c
+	$(CC) $(CFLAGS) $(INCLUDES) dbm2std.c -o dbm2std $(EXTRA_LIBS)
+
+
+DIGESTOBJS=../src/md5.o ../src/md5c.o
+../src/md5.o: ../src/md5.h
+	$(CC) $(CFLAGS) $(INCLUDES) -c ../src/md5.c -o ../src/md5.o 
+
+../src/md5c.o: ../src/md5.h
+	$(CC) $(CFLAGS) $(INCLUDES) -c ../src/md5c.c -o ../src/md5c.o 
+
+htdigest: $(DIGESTOBJS) htdigest.o  ../src/md5.h
+	$(CC) $(CFLAGS) -o htdigest htdigest.o $(DIGESTOBJS) $(EXTRA_LIBS)
+
+dbmdigest: $(DIGESTOBJS) dbmdigest.o ../src/md5.h
+	$(CC) $(CFLAGS) -o dbmdigest dbmdigest.o $(DIGESTOBJS) $(EXTRA_LIBS)
 
 unescape: unescape.c
-	$(CC) $(CFLAGS) unescape.c -o unescape
+	$(CC) $(CFLAGS) $(INCLUDES) unescape.c -o unescape
 
 inc2shtml: inc2shtml.c
-	$(CC) $(CFLAGS) inc2shtml.c -o inc2shtml
-	
+	$(CC) $(CFLAGS) $(INCLUDES) inc2shtml.c -o inc2shtml
+
+webgrab: webgrab.c
+	$(CC) $(CFLAGS) $(INCLUDES) webgrab.c -o webgrab $(EXTRA_LIBS)
 clean:
-	rm -f htpasswd unescape inc2shtml
+	rm -f $(SUPPORT) $(DIGESTOBJS) tags TAGS *.o
 
