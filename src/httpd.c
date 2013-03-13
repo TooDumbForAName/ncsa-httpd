@@ -96,6 +96,7 @@ int Alone=0;
 JMP_BUF jmpbuffer;
 int csd = -1;
 KeepAliveData keep_alive;  /* global keep alive info */
+static int num_requests = 0;
 #endif /* NOT_READY */
 
 ChildInfo *Children;
@@ -399,7 +400,7 @@ void CompleteRequest(per_request *reqInfo, int pipe)
     shutdown(csd,2);
     close(csd);
 #ifndef NO_PASS
-    if (pipe >= 0) { 
+    if ((pipe >= 0) && (num_requests < max_requests)) { 
 	write(pipe,donemsg,sizeof(donemsg));
         if (reqInfo != NULL) reqInfo->RequestFlags = 0;
 	free_request(reqInfo,NOT_LAST);
@@ -509,6 +510,8 @@ void child_main(int parent_pipe, SERVER_SOCK_ADDR *sa_server)
 {
     static per_request *reqInfo = NULL;
     close(mainSocket);
+
+    num_requests = 0;
    
 #ifdef PROFILE
     moncontrol(1);
@@ -592,6 +595,7 @@ void child_main(int parent_pipe, SERVER_SOCK_ADDR *sa_server)
 	    remote_logname = GetRemoteLogName(sa_server);
 	    keep_alive.nCurrRequests = 0;
 	    if (reqInfo != NULL) reqInfo->RequestFlags = 0;
+	    num_requests++;
 	}
 
 	reqInfo = initialize_request(reqInfo);
@@ -885,8 +889,6 @@ void standalone_main(int argc, char **argv)
 		log_error("child error: read msg failure",
 			  gConfiguration->error_log);
 	      } else if (nread == 0) {
-		log_error("child error: child connection closed",
-			  gConfiguration->error_log);
 		close(Children[x].childfd);
 		kill(Children[x].pid,SIGKILL);
 		make_child(argc, argv, x, &sa_server);

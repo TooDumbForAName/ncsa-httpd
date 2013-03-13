@@ -34,6 +34,7 @@ extern uid_t user_id;
 extern gid_t group_id;
 extern int timeout;
 extern int do_rfc931;
+extern int max_requests;
 extern char server_confname[];
 extern char server_root[];
 extern char core_dir[];

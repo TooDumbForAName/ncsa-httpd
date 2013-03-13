@@ -53,7 +53,7 @@
 #endif /* NEXT */
 
 #define SERVER_VERSION "NCSA/1.5.2"
-#define SERVER_SOURCE "NCSA/1.5.2"
+#define SERVER_SOURCE "NCSA/1.5.2a"
 #define SERVER_PROTOCOL "HTTP/1.0"
 
 /* Response Codes from HTTP/1.0 Spec 

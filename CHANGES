@@ -1,3 +1,14 @@
+Changes for 1.5.2a
+------------------
+*) Only enable keep alive from CGI scripts with content lengths and if
+   keep alive is enabled on the server
+*) Delete preceding white space on CGI headers
+*) Fix HTTP/1.1 protocal bug (if agent requested HTTP/1.1, server responded
+   with HTTP, now responds with HTTP/1.0 which is spec)
+*) Added SERVER_ROOT CGI var
+*) Should escape # character in directory indexing
+*) Add MaxRequestsPerChild support, so that errors in state can be swept under
+   the carpet
 
 Changes for 1.5.2
 ------------------

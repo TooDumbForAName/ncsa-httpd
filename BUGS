@@ -1,6 +1,10 @@
 NOTE: Bugs are mentioned in the version they are found in.  This doesn't 
 mean that they didn't exist prior to that version.
 
+Known Bugs in 1.5.2
+---------------------
+*) HTTPd doesn't recognize an HTTP/1.1 request correctlly
+
 Known Bugs in 1.5.1
 ---------------------
 *) Can only use a single group on a require group

@@ -201,6 +201,7 @@ int add_common_vars(per_request *reqInfo) {
     make_env_str(reqInfo,"SERVER_SOFTWARE",SERVER_VERSION);
     make_env_str(reqInfo,"SERVER_NAME",reqInfo->hostInfo->server_hostname);
     make_env_str(reqInfo,"SERVER_ADMIN",reqInfo->hostInfo->server_admin);
+    make_env_str(reqInfo,"SERVER_ROOT",server_root);
 
     sprintf(str,"%d",port);
     make_env_str(reqInfo,"SERVER_PORT",str);
@@ -310,7 +311,7 @@ int scan_cgi_header(per_request *reqInfo, int pd)
 	  /* delete trailing whitespace, esp. for "server push" */
 	  char *endp = l + strlen(l) - 1;
 	  while ((endp > l) && isspace(*endp)) *endp-- = '\0';
-            sscanf(l,"%s",reqInfo->outh_content_type);
+          sscanf(l,"%s",reqInfo->outh_content_type);
         }
         else if(!strcasecmp(str,"Location")) {
         /* If we don't already have a status line, make one */
@@ -318,6 +319,7 @@ int scan_cgi_header(per_request *reqInfo, int pd)
               reqInfo->status = SC_REDIRECT_TEMP;
               set_stat_line(reqInfo);
             }
+	    while (l && *l && isspace(*l)) l++;
 	    strncpy(reqInfo->outh_location,l,HUGE_STRING_LEN);
 	    reqInfo->outh_location[HUGE_STRING_LEN-1] = '\0';
 	}
@@ -331,7 +333,7 @@ int scan_cgi_header(per_request *reqInfo, int pd)
 	    }
         }
 	else if(!strcasecmp(str,"Content-length")) {
-	    keep_alive.bKeepAlive = 1;
+	    if (keep_alive.bAllowKeepAlive) keep_alive.bKeepAlive = 1;
 	    sscanf(l,"%d",&(reqInfo->outh_content_length));
 	}		
 	else if(!strcasecmp(str,"WWW-Authenticate")) {
@@ -339,6 +341,7 @@ int scan_cgi_header(per_request *reqInfo, int pd)
 	     reqInfo->status = SC_AUTH_REQUIRED;
 	     set_stat_line(reqInfo);
            }
+	   while (l && *l && isspace(*l)) l++;
 	   strncpy(reqInfo->outh_www_auth,l,HUGE_STRING_LEN);
 	   reqInfo->outh_www_auth[HUGE_STRING_LEN-1] = '\0';
         }	

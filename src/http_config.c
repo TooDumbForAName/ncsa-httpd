@@ -58,6 +58,7 @@ int standalone;
 int port;
 uid_t user_id;
 gid_t group_id;
+int max_requests;
 char server_confname[MAX_STRING_LEN];
 int timeout;  
 int do_rfc931;
@@ -119,6 +120,7 @@ void set_defaults(per_host *host, FILE *errors)
   max_servers = DEFAULT_MAX_DAEMON;
   start_servers = DEFAULT_START_DAEMON;
 #endif /* NO_PASS */
+  max_requests = DEFAULT_MAX_REQUESTS;
 
   /* ServerRoot set in httpd.c */
 
@@ -452,6 +454,9 @@ void process_server_config(per_host *host, FILE *cfg, FILE *errors,
 	config_warn("StartServers unsupported with NO_PASS compile",
 		    server_confname,n,errors);
 #endif /* NO_PASS */
+      }
+      else if(!strcasecmp(w,"MaxRequestsPerChild")) {
+	max_requests = atoi(l);
       }
 #ifdef DIGEST_AUTH
       else if(!strcasecmp(w,"AssumeDigestSupport")) {

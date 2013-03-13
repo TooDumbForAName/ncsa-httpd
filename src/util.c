@@ -830,7 +830,7 @@ void escape_uri(char *url) {
     strncpy(copy,url,HUGE_STRING_LEN);
             
     for(x=0,y=0;copy[x];x++,y++) {
-        if(ind(":% ?+&",url[y] = copy[x]) != -1) {
+        if(ind("#:% ?+&",url[y] = copy[x]) != -1) {
             c2x(copy[x],&url[y]);
             y+=2;
         }

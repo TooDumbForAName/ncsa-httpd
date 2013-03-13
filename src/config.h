@@ -116,10 +116,12 @@
 /* defines for new muli-child approach
   DEFAULT_START_DAEMON defines how many children start at httpd start
   DEFAULT_MAX_DAEMON defines how many children can start
-  */
+  DEFAULT_MAX_REQUESTS defines how many requests a child handles
+*/
 
 #define DEFAULT_START_DAEMON    5
 #define DEFAULT_MAX_DAEMON      10
+#define DEFAULT_MAX_REQUESTS    30
 
 /* defines for debugging purposes
    PROFILE to set the server up to profile the code 

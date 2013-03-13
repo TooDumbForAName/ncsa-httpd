@@ -422,10 +422,11 @@ void decode_request(per_request *reqInfo, char *request)
         reqInfo->http_version = P_HTTP_0_9;
     }
     else {
+	/* On an HTTP/1.0 or HTTP/1.1 request, respond with 1.0 */
         if (!strcmp(protocal,protocals[P_HTTP_1_0])) 
 	    reqInfo->http_version = P_HTTP_1_0;
-	else if (!strcmp(protocal,protocals[P_HTTP_1_0])) 
-	    reqInfo->http_version = P_HTTP_1_1;
+	else if (!strcmp(protocal,protocals[P_HTTP_1_1])) 
+	    reqInfo->http_version = P_HTTP_1_0;
         else if (!strcasecmp(protocal,protocals[P_SHTTP_1_1]))
 	    reqInfo->http_version = P_SHTTP_1_1;
         else if (!strcasecmp(protocal,protocals[P_SHTTP_1_2]))

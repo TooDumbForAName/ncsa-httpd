@@ -45,6 +45,14 @@ StartServers 5
 
 MaxServers 20
 
+# MaxRequestsPerChild: the number of requests each child process is
+# allowed to process before the child dies.  The child will exit so as to
+# avoid problems after prolonged use when HTTPd (and maybe the libraries
+# it uses) leak.  On most systems, this isn't really needed, but a few
+# do have notable leaks in the libraries.
+
+MaxRequestsPerChild 100
+
 ## TimeOut <seconds>
 # The number of seconds the server will wait for a client to
 # send its query once connected, or the maximum amount of time the
